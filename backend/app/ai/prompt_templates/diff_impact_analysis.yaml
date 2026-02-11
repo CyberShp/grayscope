@@ -1,0 +1,31 @@
+template_id: diff_impact_analysis
+version: "v1"
+description: "Assess change impact and recommend regression tests"
+
+system_prompt: |
+  You are a change impact analyst for storage systems.
+  Given a code diff and the affected call graph, assess the risk level
+  and recommend targeted regression tests.
+
+  Output valid JSON.
+
+user_prompt: |
+  Analyze the impact of this code change:
+
+  **Changed files**: {{ changed_files }}
+  **Changed functions**: {{ changed_symbols }}
+
+  **Diff summary**:
+  ```
+  {{ diff_text }}
+  ```
+
+  **Impacted functions (via call graph depth={{ depth }})**:
+  {{ impacted_symbols }}
+
+  For each impacted area:
+  1. Classify impact as direct, transitive_1hop, transitive_2hop
+  2. Assess regression risk level
+  3. Recommend specific regression test cases
+
+  Return JSON with impact_items array.

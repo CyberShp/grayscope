@@ -1,0 +1,255 @@
+/* ============================================================
+   GrayScope 全局样式
+   ============================================================ */
+@import './variables.css';
+
+/* ── 重置 ─────────────────────────────────── */
+*, *::before, *::after {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body, #app {
+  height: 100%;
+  font-family: var(--gs-font-family);
+  font-size: var(--gs-font-base);
+  color: var(--gs-text-primary);
+  background: var(--gs-bg);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+a {
+  color: var(--gs-text-link);
+  text-decoration: none;
+}
+a:hover {
+  text-decoration: underline;
+}
+
+/* ── 通用页面工具类 ──────────────────────── */
+.gs-page {
+  padding: var(--gs-space-lg);
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+.gs-page-wide {
+  padding: var(--gs-space-lg);
+}
+
+.gs-page-header {
+  margin-bottom: var(--gs-space-lg);
+}
+
+.gs-page-title {
+  font-size: var(--gs-font-xl);
+  font-weight: 600;
+  color: var(--gs-text-primary);
+  line-height: 1.3;
+}
+
+.gs-page-desc {
+  font-size: var(--gs-font-md);
+  color: var(--gs-text-secondary);
+  margin-top: var(--gs-space-xs);
+}
+
+.gs-section {
+  margin-bottom: var(--gs-space-lg);
+}
+
+/* ── 卡片 ─────────────────────────────────── */
+.gs-card {
+  background: var(--gs-surface);
+  border: 1px solid var(--gs-border);
+  border-radius: var(--gs-radius-md);
+  padding: var(--gs-space-lg);
+}
+
+.gs-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--gs-space-md);
+}
+
+.gs-card-title {
+  font-size: var(--gs-font-md);
+  font-weight: 600;
+  color: var(--gs-text-primary);
+}
+
+/* ── 统计卡片 ─────────────────────────────── */
+.gs-stat-card {
+  background: var(--gs-surface);
+  border: 1px solid var(--gs-border);
+  border-radius: var(--gs-radius-md);
+  padding: var(--gs-space-md) var(--gs-space-lg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--gs-space-xs);
+}
+
+.gs-stat-value {
+  font-size: var(--gs-font-2xl);
+  font-weight: 700;
+  color: var(--gs-text-primary);
+  line-height: 1.2;
+}
+
+.gs-stat-label {
+  font-size: var(--gs-font-sm);
+  color: var(--gs-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* ── 徽章/标签 ────────────────────────────── */
+.gs-severity-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 3px;
+  font-size: var(--gs-font-xs);
+  font-weight: 600;
+  line-height: 1.5;
+}
+.gs-severity-s0 { background: #FDE8E8; color: #A4030F; }
+.gs-severity-s1 { background: #FDE8E8; color: #D4333F; }
+.gs-severity-s2 { background: #FEF3C7; color: #92400E; }
+.gs-severity-s3 { background: #DBEAFE; color: #1E40AF; }
+
+.gs-risk-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 20px;
+  border-radius: 3px;
+  font-size: var(--gs-font-xs);
+  font-weight: 700;
+  color: #fff;
+}
+.gs-risk-safe { background: var(--gs-risk-safe); }
+.gs-risk-low { background: var(--gs-risk-low); }
+.gs-risk-medium { background: var(--gs-risk-medium); color: #1D1D1D; }
+.gs-risk-high { background: var(--gs-risk-high); }
+.gs-risk-critical { background: var(--gs-risk-critical); }
+
+/* ── 质量门禁 Banner ─────────────────────── */
+.gs-quality-gate {
+  display: flex;
+  align-items: center;
+  gap: var(--gs-space-md);
+  padding: var(--gs-space-md) var(--gs-space-lg);
+  border-radius: var(--gs-radius-md);
+  font-weight: 600;
+  font-size: var(--gs-font-md);
+}
+.gs-quality-gate--pass {
+  background: var(--gs-gate-pass-bg);
+  border: 1px solid var(--gs-gate-pass);
+  color: #166534;
+}
+.gs-quality-gate--fail {
+  background: var(--gs-gate-fail-bg);
+  border: 1px solid var(--gs-gate-fail);
+  color: #991B1B;
+}
+.gs-quality-gate-icon {
+  font-size: 24px;
+  line-height: 1;
+}
+
+/* ── 模块状态点 ───────────────────────────── */
+.gs-status-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 6px;
+}
+.gs-status-dot--success { background: var(--gs-success); }
+.gs-status-dot--running { background: var(--gs-warning); animation: pulse 1.5s infinite; }
+.gs-status-dot--failed { background: var(--gs-danger); }
+.gs-status-dot--pending { background: var(--gs-text-muted); }
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+/* ── Facets 面板 ──────────────────────────── */
+.gs-facets {
+  width: 260px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--gs-border);
+  padding: var(--gs-space-md);
+  overflow-y: auto;
+  background: var(--gs-surface);
+}
+
+.gs-facet-group {
+  margin-bottom: var(--gs-space-lg);
+}
+
+.gs-facet-title {
+  font-size: var(--gs-font-sm);
+  font-weight: 600;
+  color: var(--gs-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: var(--gs-space-sm);
+}
+
+.gs-facet-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 8px;
+  border-radius: var(--gs-radius-sm);
+  cursor: pointer;
+  font-size: var(--gs-font-base);
+  transition: background var(--gs-transition);
+}
+.gs-facet-item:hover { background: var(--gs-surface-alt); }
+.gs-facet-item.active { background: #E8F4FD; color: var(--gs-primary-dark); font-weight: 600; }
+.gs-facet-count {
+  font-size: var(--gs-font-xs);
+  color: var(--gs-text-muted);
+  min-width: 24px;
+  text-align: right;
+}
+
+/* ── 表格增强 ─────────────────────────────── */
+.gs-table .el-table__header th {
+  background: var(--gs-surface-alt) !important;
+  color: var(--gs-text-secondary);
+  font-size: var(--gs-font-sm);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+/* ── Element Plus 覆盖 ────────────────────── */
+.el-card {
+  border-radius: var(--gs-radius-md);
+  border-color: var(--gs-border);
+}
+
+.el-button--primary {
+  --el-button-bg-color: var(--gs-primary);
+  --el-button-border-color: var(--gs-primary);
+}
+.el-button--primary:hover {
+  --el-button-hover-bg-color: var(--gs-primary-light);
+  --el-button-hover-border-color: var(--gs-primary-light);
+}
+
+/* ── 滚动条美化 ───────────────────────────── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #C4C4C4; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #999; }

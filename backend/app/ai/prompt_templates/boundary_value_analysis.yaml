@@ -1,0 +1,29 @@
+template_id: boundary_value_analysis
+version: "v1"
+description: "Extract boundary conditions and derive test values"
+
+system_prompt: |
+  You are a boundary value analysis expert for C/C++ storage systems.
+  Given source code, identify all comparison expressions and derive
+  boundary test candidates following the boundary value analysis method.
+  For each constraint produce: min-1, min, mid, max, max+1, and any
+  special invalid values (NULL, 0, negative, overflow).
+
+  Output valid JSON.
+
+user_prompt: |
+  Analyze boundary conditions in:
+
+  **Function**: `{{ function_name }}`
+
+  ```c
+  {{ source_code }}
+  ```
+
+  For each condition/comparison:
+  1. Extract the constraint expression
+  2. Derive min/max bounds
+  3. Generate candidate test values
+  4. Note any special invalid inputs
+
+  Return JSON array of boundary objects.

@@ -1,0 +1,81 @@
+/* ============================================================
+   GrayScope 全局设计变量 — SonarQube 风格
+   ============================================================ */
+
+:root {
+  /* ── 品牌色 ─────────────────────────────── */
+  --gs-primary: #4B9FD5;
+  --gs-primary-light: #7BB8E0;
+  --gs-primary-dark: #236A97;
+
+  /* ── 导航栏 ─────────────────────────────── */
+  --gs-nav-bg: #262626;
+  --gs-nav-text: #CCCCCC;
+  --gs-nav-active: #FFFFFF;
+  --gs-nav-hover-bg: #3C3C3C;
+  --gs-nav-height: 48px;
+
+  /* ── 背景与表面 ─────────────────────────── */
+  --gs-bg: #F3F3F3;
+  --gs-surface: #FFFFFF;
+  --gs-surface-alt: #FAFAFA;
+  --gs-border: #E6E6E6;
+  --gs-border-light: #F0F0F0;
+
+  /* ── 文本 ───────────────────────────────── */
+  --gs-text-primary: #1D1D1D;
+  --gs-text-secondary: #656565;
+  --gs-text-muted: #999999;
+  --gs-text-link: #236A97;
+
+  /* ── 风险/严重度色阶 ────────────────────── */
+  --gs-risk-safe: #00AA00;
+  --gs-risk-low: #6BBD5B;
+  --gs-risk-medium: #EAB308;
+  --gs-risk-high: #D4333F;
+  --gs-risk-critical: #A4030F;
+
+  /* ── 语义色 ─────────────────────────────── */
+  --gs-success: #00AA00;
+  --gs-warning: #EAB308;
+  --gs-danger: #D4333F;
+  --gs-info: #4B9FD5;
+
+  /* ── 质量门禁 ───────────────────────────── */
+  --gs-gate-pass: #00AA00;
+  --gs-gate-pass-bg: #F0FFF0;
+  --gs-gate-fail: #D4333F;
+  --gs-gate-fail-bg: #FFF0F0;
+
+  /* ── 间距 ───────────────────────────────── */
+  --gs-space-xs: 4px;
+  --gs-space-sm: 8px;
+  --gs-space-md: 16px;
+  --gs-space-lg: 24px;
+  --gs-space-xl: 32px;
+  --gs-space-2xl: 48px;
+
+  /* ── 圆角 ───────────────────────────────── */
+  --gs-radius-sm: 3px;
+  --gs-radius-md: 6px;
+  --gs-radius-lg: 8px;
+
+  /* ── 阴影 ───────────────────────────────── */
+  --gs-shadow-sm: 0 1px 2px rgba(0,0,0,0.06);
+  --gs-shadow-md: 0 2px 8px rgba(0,0,0,0.08);
+  --gs-shadow-lg: 0 4px 16px rgba(0,0,0,0.1);
+
+  /* ── 字体 ───────────────────────────────── */
+  --gs-font-family: 'PingFang SC', 'Microsoft YaHei', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --gs-font-mono: 'JetBrains Mono', 'Fira Code', 'SF Mono', Menlo, Consolas, monospace;
+  --gs-font-xs: 11px;
+  --gs-font-sm: 12px;
+  --gs-font-base: 13px;
+  --gs-font-md: 14px;
+  --gs-font-lg: 16px;
+  --gs-font-xl: 20px;
+  --gs-font-2xl: 24px;
+
+  /* ── 过渡 ───────────────────────────────── */
+  --gs-transition: 0.2s ease;
+}

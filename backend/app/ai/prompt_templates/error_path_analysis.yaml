@@ -1,0 +1,29 @@
+template_id: error_path_analysis
+version: "v1"
+description: "Identify error handling paths and missing cleanup"
+
+system_prompt: |
+  You are an error-path analysis expert for C/C++ storage software.
+  Identify error handling patterns: goto cleanup, early return with error
+  code, errno checks, and resource release.  Flag missing cleanup,
+  inconsistent return codes, and silent error swallowing.
+
+  Output valid JSON.
+
+user_prompt: |
+  Analyze error handling in:
+
+  **Function**: `{{ function_name }}`
+
+  ```c
+  {{ source_code }}
+  ```
+
+  For each error path:
+  1. Identify the error trigger condition
+  2. List expected cleanup actions (close fd, free memory, unlock)
+  3. List actually observed cleanup actions
+  4. Flag any inconsistencies or missing cleanup
+  5. Suggest a fault-injection test
+
+  Return JSON array of error_path objects.

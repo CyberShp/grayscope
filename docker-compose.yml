@@ -1,0 +1,59 @@
+# GrayScope 灰盒测试分析平台 - Docker Compose 配置
+# 包含后端服务、前端 Nginx 服务
+
+version: "3.9"
+
+services:
+  # ── 后端 API 服务 ──────────────────────────────────────────────
+  backend:
+    build: .
+    ports:
+      - "18080:18080"
+    environment:
+      - DATABASE_URL=sqlite:///./grayscope.db
+      - REPO_WORKSPACE=/data/repos
+      - OLLAMA_BASE_URL=http://host.docker.internal:11434
+      - PROMPT_TEMPLATE_DIR=/app/prompt_templates
+    volumes:
+      - gs-data:/data
+      - ./test_samples:/data/repos/test_samples:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:18080/api/v1/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # ── 前端 Nginx 服务（生产部署） ─────────────────────────────────
+  frontend:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./frontend/dist:/usr/share/nginx/html:ro
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      # 如需 HTTPS，取消注释以下行并挂载证书
+      # - ./certs/server.crt:/etc/nginx/ssl/server.crt:ro
+      # - ./certs/server.key:/etc/nginx/ssl/server.key:ro
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  # ── 前端开发服务（仅开发环境使用） ─────────────────────────────
+  frontend-dev:
+    image: node:20-alpine
+    working_dir: /app
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
+    ports:
+      - "15173:15173"
+    volumes:
+      - ./frontend:/app
+    depends_on:
+      - backend
+    profiles:
+      - dev
+    restart: unless-stopped
+
+volumes:
+  gs-data:

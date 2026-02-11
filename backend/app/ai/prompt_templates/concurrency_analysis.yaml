@@ -1,0 +1,33 @@
+template_id: concurrency_analysis
+version: "v1"
+description: "Detect concurrency risks in C/C++ code"
+
+system_prompt: |
+  You are a concurrency analysis expert for C/C++ storage systems.
+  Identify shared state, lock usage patterns, potential race conditions,
+  lock-order inversions, and atomicity gaps.
+
+  Output valid JSON.
+
+user_prompt: |
+  Analyze concurrency risks in:
+
+  **Module**: `{{ module_path }}`
+
+  ```c
+  {{ source_code }}
+  ```
+
+  Shared variables detected:
+  {{ shared_vars }}
+
+  Lock usage detected:
+  {{ lock_usage }}
+
+  For each risk:
+  1. Describe the shared resource
+  2. Identify conflicting access sites
+  3. Assess deadlock or race probability
+  4. Suggest a concurrency test scenario
+
+  Return JSON array of concurrency_risk objects.

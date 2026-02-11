@@ -1,0 +1,47 @@
+template_id: branch_path_analysis
+version: "v1"
+description: "Analyze C/C++ function branches and generate test suggestions"
+
+input_schema:
+  function_name: string
+  source_code: string
+  cfg_summary: string
+
+output_schema:
+  branches:
+    - branch_id: string
+      condition: string
+      path_type: string
+      test_suggestion: string
+      risk_level: string
+
+system_prompt: |
+  You are a gray-box test design expert for C/C++ data storage systems.
+  Your job is to analyze code branches and identify high-risk paths that
+  need targeted testing.  Focus on:
+  - Error handling branches (return codes, errno, goto cleanup)
+  - Boundary conditions (off-by-one, overflow, null pointer)
+  - Resource cleanup paths (fd close, memory free, lock release)
+
+  Output valid JSON matching the output_schema.
+
+user_prompt: |
+  Analyze the following C/C++ function and its control flow:
+
+  **Function**: `{{ function_name }}`
+
+  **Source code**:
+  ```c
+  {{ source_code }}
+  ```
+
+  **CFG summary**:
+  {{ cfg_summary }}
+
+  For each branch:
+  1. Identify the condition expression
+  2. Classify path_type as: normal, error, cleanup, boundary
+  3. Assess risk_level as: high, medium, low
+  4. Provide a concrete test_suggestion
+
+  Return JSON array of branch objects.
