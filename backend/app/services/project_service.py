@@ -45,6 +45,13 @@ def add_repo(db: Session, project_id: int, req: RepoCreate) -> RepoOut:
     if proj is None:
         raise NotFoundError(f"project {project_id} not found")
 
+    # Check for duplicate repo name within the same project
+    existing_repos = repository_repo.list_by_project(db, project_id)
+    if any(r.name == req.name for r in existing_repos):
+        raise InvalidRequestError(
+            f"repository name '{req.name}' already exists in project {project_id}"
+        )
+
     mirror_path = req.local_mirror_path
     if not mirror_path:
         mirror_path = str(
