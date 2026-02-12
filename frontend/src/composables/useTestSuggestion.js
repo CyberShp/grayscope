@@ -1,6 +1,6 @@
 /**
- * 前端侧的测试建议生成 — 镜像后端 export_service.py 的逻辑，
- * 使得在发现详情中可以不依赖额外 API 直接内联展示测试建议。
+ * 前端侧的测试建议生成 — 基于发现的 evidence 数据
+ * 生成具体、可操作的中文测试建议。
  */
 
 const SEV_PRIORITY = { S0: 'P0-紧急', S1: 'P1-高', S2: 'P2-中', S3: 'P3-低' }
@@ -8,31 +8,33 @@ const SEV_PRIORITY = { S0: 'P0-紧急', S1: 'P1-高', S2: 'P2-中', S3: 'P3-低'
 function getTestObjective(finding) {
   const sym = finding.symbol_name || '目标函数'
   const rt = finding.risk_type || ''
+  const ev = finding.evidence || {}
+
   const mapping = {
-    branch_missing_test: `验证 ${sym}() 中的未覆盖分支是否有对应测试`,
-    branch_error: `验证 ${sym}() 中的错误处理分支是否正确触发和处理`,
-    branch_cleanup: `验证 ${sym}() 中的清理路径是否释放所有资源`,
-    branch_boundary: `验证 ${sym}() 中的边界条件分支是否正确处理边界值`,
-    branch_normal: `验证 ${sym}() 的正常执行路径`,
-    error_path: `验证 ${sym}() 中的错误返回路径是否正确处理`,
-    cleanup_path: `验证 ${sym}() 中的清理路径是否正确释放资源`,
-    boundary_miss: `测试 ${sym}() 中约束条件的边界值，包括 off-by-one`,
-    invalid_input_gap: `验证 ${sym}() 对非法输入的拒绝与校验`,
-    missing_cleanup: `验证 ${sym}() 在错误路径上是否正确释放所有资源`,
-    inconsistent_errno_mapping: `验证 ${sym}() 中的错误码映射是否一致`,
-    silent_error_swallow: `验证 ${sym}() 中的错误是否被正确传播给调用者`,
-    race_write_without_lock: `验证 ${sym}() 中共享变量访问的线程安全性`,
-    lock_order_inversion: `验证 ${sym}() 中锁获取是否存在死锁风险`,
-    atomicity_gap: `验证 ${sym}() 中的复合操作是否具有原子性`,
-    changed_core_path: `对修改的函数 ${sym}() 进行回归测试`,
-    transitive_impact: `对受上游变更影响的函数 ${sym}() 进行回归测试`,
-    high_risk_low_coverage: `提高高风险函数 ${sym}() 的测试覆盖率`,
-    critical_path_uncovered: `为未覆盖的关键函数 ${sym}() 增加测试覆盖`,
-    high_fan_out: `对高影响力枢纽函数 ${sym}() 进行集成测试`,
-    deep_impact_surface: `验证函数 ${sym}() 的契约稳定性（被多个调用者依赖）`,
-    hotspot_regression_risk: `对历史热点函数 ${sym}() 进行回归测试`,
+    branch_missing_test: `验证 ${sym}() 中未被测试覆盖的分支路径在各种输入下的行为`,
+    branch_error: `验证 ${sym}() 中的错误处理分支：当条件「${ev.condition_expr || '错误条件'}」触发时，确认错误处理逻辑完整、资源无泄漏`,
+    branch_cleanup: `验证 ${sym}() 中的资源清理路径：确认所有分配的资源在异常退出时被正确释放`,
+    branch_boundary: `验证 ${sym}() 中边界条件「${ev.condition_expr || ''}」附近的行为：确认边界值、边界±1均被正确处理`,
+    branch_normal: `验证 ${sym}() 的正常执行路径在典型输入下的行为符合预期`,
+    error_path: `验证 ${sym}() 中的错误返回路径：确认函数在失败时返回正确的错误码`,
+    cleanup_path: `验证 ${sym}() 在异常退出时正确释放所有资源（${(ev.cleanup_resources_expected || []).join('、') || '内存/文件/锁'}）`,
+    boundary_miss: `使用边界值测试 ${sym}() 中的约束条件「${ev.constraint_expr || ''}」：包括边界值本身、边界±1、零值和负数`,
+    invalid_input_gap: `验证 ${sym}() 对非法输入的处理：数组「${ev.array_name || ''}」的越界访问应被检测和拒绝`,
+    missing_cleanup: `验证 ${sym}() 在错误路径上正确释放所有已分配资源（需要释放: ${(ev.cleanup_resources_expected || []).join('、') || '相关资源'}）`,
+    inconsistent_errno_mapping: `验证 ${sym}() 中每条错误路径返回的错误码与预期一致（发现 ${(ev.error_codes || []).length || '多种'} 种不同错误码）`,
+    silent_error_swallow: `验证 ${sym}() 中的错误不被静默忽略：确认所有错误都传播给调用者`,
+    race_write_without_lock: `验证 ${sym}() 中对共享变量「${ev.shared_symbol || ''}」的并发写入安全性：使用多线程压力测试`,
+    lock_order_inversion: `验证涉及 ${sym} 的锁获取顺序：确认不会产生 ABBA 死锁`,
+    atomicity_gap: `验证 ${sym}() 中锁的获取/释放配对完整性：确认所有退出路径都释放了锁`,
+    changed_core_path: `对修改后的 ${sym}() 进行回归测试：确认功能行为不变、接口契约稳定`,
+    transitive_impact: `对受上游变更影响的 ${sym}() 进行回归测试：验证其依赖的函数行为未意外改变`,
+    high_risk_low_coverage: `为高风险函数 ${sym}() 增加测试覆盖率：重点关注行覆盖率 ${((ev.line_coverage || 0) * 100).toFixed(0)}% 需提升的区域`,
+    critical_path_uncovered: `为零覆盖的关键函数 ${sym}() 编写测试用例，确保基本功能被验证`,
+    high_fan_out: `为高扇出枢纽函数 ${sym}()（调用 ${ev.fan_out || '多个'} 个函数）建立集成测试`,
+    deep_impact_surface: `为被 ${ev.fan_in || '多个'} 个函数调用的关键函数 ${sym}() 建立接口契约测试`,
+    hotspot_regression_risk: `对历史热点函数 ${sym}() 进行全面回归测试`,
   }
-  return mapping[rt] || `验证 ${sym}() 中与 ${rt} 相关的行为`
+  return mapping[rt] || `验证 ${sym}() 中与「${rt}」相关的行为是否符合预期`
 }
 
 function getTestSteps(finding) {
@@ -42,104 +44,138 @@ function getTestSteps(finding) {
 
   if (rt.includes('boundary') || rt === 'invalid_input_gap') {
     const candidates = ev.candidates || []
-    const expr = ev.constraint_expr || ''
-    const steps = [`1. 识别约束条件: ${expr}`]
-    if (candidates.length) steps.push(`2. 准备边界测试值: ${candidates.join(', ')}`)
-    steps.push(`3. 使用每个候选值调用 ${sym}()`)
-    steps.push('4. 验证每种情况下的返回值和副作用')
+    const expr = ev.constraint_expr || ev.array_name || ''
+    const steps = []
+    if (expr) steps.push(`1. 定位约束条件「${expr}」所在的代码行`)
+    else steps.push(`1. 定位 ${sym}() 中的边界检查条件`)
+    if (candidates.length) {
+      steps.push(`2. 准备以下测试输入值: ${candidates.map(c => `「${c}」`).join('、')}`)
+    } else {
+      steps.push('2. 准备测试值：下限值、下限-1、上限值、上限+1、0、-1')
+    }
+    steps.push(`3. 依次使用每个测试值调用 ${sym}()，记录返回值和程序行为`)
+    steps.push('4. 验证：(a) 合法值返回正确结果；(b) 非法值被拒绝且不会崩溃；(c) 边界值处行为符合文档定义')
     return steps
   }
+
   if (rt.includes('cleanup') || rt === 'missing_cleanup') {
-    const resources = ev.cleanup_resources_expected || []
+    const expected = ev.cleanup_resources_expected || []
+    const observed = ev.cleanup_resources_observed || []
+    const missing = expected.filter(r => !observed.includes(r))
     return [
-      `1. 设置资源跟踪: ${resources.join(', ') || '相关资源'}`,
-      `2. 使用触发错误路径的参数调用 ${sym}()`,
-      '3. 在资源分配/IO 点注入失败',
-      '4. 验证错误后所有跟踪的资源已正确释放',
+      `1. 在 ${sym}() 的资源分配点设置断点或跟踪：${expected.join('、') || '内存/文件/锁'}`,
+      '2. 构造触发错误路径的输入（例如：传入 NULL 指针、使 malloc 返回 NULL、模拟 IO 失败）',
+      `3. 执行 ${sym}() 并让其走入错误返回路径`,
+      `4. 检查以下资源是否被释放: ${expected.join('、')}` + (missing.length ? `（当前缺失: ${missing.join('、')}）` : ''),
+      '5. 使用 Valgrind/AddressSanitizer 验证无内存泄漏',
     ]
   }
+
   if (rt.includes('race') || rt.includes('lock') || rt === 'atomicity_gap') {
     const shared = ev.shared_symbol || ''
+    const locks = ev.acquired_locks || ev.conflicting_locks || []
     return [
-      `1. 启动并发线程访问 ${shared || sym}()`,
-      '2. 运行交叉操作的压力测试',
-      '3. 使用线程检测工具（TSan）或手动竞态检测',
-      '4. 验证无数据损坏或死锁',
+      `1. 编写多线程测试：启动 2-4 个线程并发调用涉及 ${shared || sym}() 的代码`,
+      '2. 在线程中交叉执行读写操作，确保足够的并发压力',
+      `3. 使用 ThreadSanitizer (TSan) 编译运行：gcc -fsanitize=thread -g ${sym}.c -o test`,
+      `4. 检查 TSan 报告中是否有 "data race" 或 "lock-order-inversion" 警告`,
+      locks.length ? `5. 确认锁（${locks.join('、')}）在所有路径上都被正确获取和释放` : '5. 确认共享数据的访问都有适当的同步保护',
     ]
   }
+
   if (rt.includes('changed') || rt.includes('transitive') || rt.includes('hotspot')) {
     const impacted = (ev.impacted_symbols || []).slice(0, 5)
     const steps = [
-      `1. 审查 ${sym}() 的变更内容`,
-      `2. 运行 ${sym}() 的已有测试`,
+      `1. 查看 ${sym}() 的代码变更内容（git diff），理解修改了什么`,
+      `2. 运行 ${sym}() 已有的单元测试，确认全部通过`,
+      `3. 使用修改前后的典型输入调用 ${sym}()，对比输出是否一致`,
     ]
-    if (impacted.length) steps.push(`3. 对受影响的调用者运行回归测试: ${impacted.join(', ')}`)
-    steps.push('4. 验证功能行为符合规范')
+    if (impacted.length) {
+      steps.push(`4. 对以下受影响的调用者运行回归测试: ${impacted.map(s => s + '()').join('、')}`)
+    }
+    steps.push(`${impacted.length ? 5 : 4}. 确认函数的返回值类型、错误码语义、副作用均未改变`)
     return steps
   }
+
   if (rt === 'inconsistent_errno_mapping') {
+    const codes = ev.error_codes || []
     return [
-      `1. 遍历 ${sym}() 的所有错误返回路径`,
-      '2. 在每个错误触发点注入失败条件',
-      '3. 比较实际返回码与文档/头文件中定义的预期值',
-      '4. 验证每条错误路径返回正确的错误码',
+      `1. 列出 ${sym}() 的所有错误返回路径及其返回值${codes.length ? `（当前发现: ${codes.join('、')}）` : ''}`,
+      '2. 对照头文件或文档，确认每个错误码的含义是否正确',
+      `3. 逐个注入错误条件（使内部调用失败），调用 ${sym}()`,
+      '4. 验证：每种错误场景返回预期的错误码，无混用或遗漏',
     ]
   }
+
   if (rt === 'silent_error_swallow') {
     return [
-      `1. 在 ${sym}() 的错误路径注入失败条件`,
-      '2. 检查调用者是否能收到正确的错误通知',
-      '3. 验证日志是否记录了错误信息',
-      '4. 确认无静默忽略的错误返回',
+      `1. 在 ${sym}() 的内部调用点注入失败（例如：让文件操作返回错误）`,
+      `2. 调用 ${sym}() 并检查其返回值是否反映了内部错误`,
+      '3. 检查调用者是否能收到正确的错误信息（不是被静默忽略的 0 或 void）',
+      '4. 检查是否有日志记录了该错误信息（生产环境需要可追溯性）',
     ]
   }
+
   if (rt === 'high_fan_out' || rt === 'deep_impact_surface') {
+    const callees = (ev.callees || []).slice(0, 5)
+    const callers = (ev.callers || []).slice(0, 5)
     return [
-      `1. 审查 ${sym}() 的被调用者列表`,
-      `2. 修改 ${sym}() 的接口契约`,
-      '3. 检查所有下游调用者是否仍然正常',
-      '4. 运行集成测试验证端到端行为',
+      `1. 审查 ${sym}() 的接口契约：参数类型、返回值含义、前置/后置条件`,
+      callees.length
+        ? `2. 验证 ${sym}() 对以下被调用函数的调用是否正确: ${callees.map(c => c + '()').join('、')}`
+        : `2. 验证 ${sym}() 与其依赖函数之间的交互是否正确`,
+      callers.length
+        ? `3. 模拟修改 ${sym}() 的返回值，验证调用者 ${callers.map(c => c + '()').join('、')} 是否能正确适应`
+        : `3. 编写集成测试覆盖 ${sym}() 的主要调用场景`,
+      `4. 运行端到端测试验证整条调用链的功能正确性`,
     ]
   }
+
   if (rt.includes('coverage')) {
+    const lineCov = ev.line_coverage ? `${(ev.line_coverage * 100).toFixed(0)}%` : '未知'
     return [
-      `1. 使用覆盖率工具标记 ${sym}() 的未覆盖行`,
-      '2. 设计覆盖未执行分支的测试输入',
-      '3. 运行新测试并验证覆盖率提升',
-      '4. 关注高风险区域的分支覆盖',
+      `1. 运行覆盖率工具（gcov/lcov）查看 ${sym}() 的未覆盖行（当前行覆盖率: ${lineCov}）`,
+      '2. 分析未覆盖行所属的分支条件，设计能触发这些分支的输入',
+      `3. 编写测试用例覆盖 ${sym}() 中的关键路径`,
+      '4. 重新运行覆盖率工具，确认覆盖率有明显提升',
     ]
   }
+
   // 通用
   return [
-    `1. 搭建 ${sym}() 的测试环境`,
-    `2. 使用代表性输入调用 ${sym}()`,
-    '3. 验证预期行为和返回值',
-    '4. 检查资源泄漏和错误处理',
+    `1. 分析 ${sym}() 的输入参数和前置条件`,
+    `2. 使用正常值、边界值、非法值分别调用 ${sym}()`,
+    '3. 检查返回值是否正确，是否有内存泄漏或资源未释放',
+    '4. 检查边界情况（空指针、零长度、最大值）下的行为',
   ]
 }
 
 function getTestExpected(finding) {
   const rt = finding.risk_type || ''
+  const sym = finding.symbol_name || '目标函数'
+  const ev = finding.evidence || {}
   const mapping = {
-    boundary_miss: '函数正确处理所有边界值，无崩溃或数据损坏',
-    invalid_input_gap: '非法输入被拒绝；无缓冲区溢出或越界访问',
-    missing_cleanup: '在每条错误路径上所有已分配的资源均已释放',
-    inconsistent_errno_mapping: '每条错误路径返回正确的、文档记录的错误码',
-    silent_error_swallow: '所有错误均正确传播给调用者，无静默吞没',
-    race_write_without_lock: '并发访问下未检测到数据竞态',
-    lock_order_inversion: '所有锁序组合下的并发执行无死锁',
-    atomicity_gap: '复合操作具有原子性，中断后状态一致',
-    changed_core_path: '修改后的函数行为与规范一致',
-    transitive_impact: '上游变更后下游调用函数继续正常工作',
-    branch_missing_test: '所有关键分支都有对应测试覆盖',
-    error_path: '错误路径正确处理并返回预期错误码',
-    cleanup_path: '清理路径释放所有已分配资源',
-    high_risk_low_coverage: '高风险区域的测试覆盖率达到可接受水平',
-    critical_path_uncovered: '关键路径获得充分测试覆盖',
-    high_fan_out: '高扇出函数的接口变更不影响下游调用者',
-    deep_impact_surface: '深调用链函数的契约保持稳定',
+    boundary_miss: `${sym}() 在所有边界值处行为正确：合法值返回正确结果，非法值被拒绝，无崩溃或数据损坏`,
+    invalid_input_gap: `非法下标被检测并拒绝，不产生缓冲区溢出或段错误，函数返回明确的错误状态`,
+    missing_cleanup: `在每条错误退出路径上，所有已分配资源（${(ev.cleanup_resources_expected || []).join('、') || '内存/文件/锁'}）均已正确释放`,
+    inconsistent_errno_mapping: `每条错误路径返回正确的、与文档一致的错误码，无混用`,
+    silent_error_swallow: `所有内部错误均正确传播给调用者，调用者能区分成功和各类失败`,
+    race_write_without_lock: `ThreadSanitizer 检测无数据竞态报告，并发写入${ev.shared_symbol ? ` '${ev.shared_symbol}'` : ''} 有正确的同步保护`,
+    lock_order_inversion: `所有锁的获取顺序一致，多线程压力测试下无死锁发生`,
+    atomicity_gap: `所有退出路径（含错误路径）都正确释放了锁，无死锁风险`,
+    changed_core_path: `修改后的 ${sym}() 行为与修改前一致（除非是有意的行为变更），所有调用者不受影响`,
+    transitive_impact: `上游函数变更后 ${sym}() 的行为不变，返回值和副作用与变更前一致`,
+    branch_missing_test: `所有关键分支路径都有测试覆盖，无遗漏的未测试代码路径`,
+    branch_error: `错误分支正确执行：返回正确错误码、释放已分配资源、不产生副作用`,
+    branch_cleanup: `清理路径释放所有已分配资源，无遗漏`,
+    error_path: `错误路径返回正确的错误码，资源完整释放`,
+    cleanup_path: `清理路径完整执行，所有资源正确释放`,
+    high_risk_low_coverage: `高风险区域的测试覆盖率显著提升，关键路径被充分验证`,
+    critical_path_uncovered: `关键路径从零覆盖提升到有效覆盖，基本功能被验证`,
+    high_fan_out: `${sym}() 的接口变更或被调用者变更不破坏端到端功能`,
+    deep_impact_surface: `${sym}() 的接口契约稳定，修改不影响所有 ${ev.fan_in || ''} 个调用者`,
   }
-  return mapping[rt] || '函数行为正确且优雅地处理边界情况'
+  return mapping[rt] || `${sym}() 在所有测试场景下行为正确，无崩溃、泄漏或意外行为`
 }
 
 function getTestPriority(finding) {

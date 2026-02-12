@@ -8,19 +8,134 @@ import time
 from fastapi import APIRouter
 
 from app.ai.provider_registry import SUPPORTED_PROVIDERS, get_provider
+from app.config import settings
 from app.core.response import error, ok
 from app.schemas.model_config import ModelListOut, ModelTestOut, ModelTestRequest, ProviderModels
 
 router = APIRouter()
 
+# Provider metadata for the frontend
+_PROVIDER_META = {
+    "ollama": {
+        "display_name": "Ollama (本地)",
+        "provider_type": "local",
+        "default_models": ["qwen2.5-coder", "codellama", "deepseek-coder-v2", "starcoder2"],
+    },
+    "deepseek": {
+        "display_name": "DeepSeek",
+        "provider_type": "cloud",
+        "default_models": ["deepseek-coder", "deepseek-chat"],
+    },
+    "qwen": {
+        "display_name": "通义千问 Qwen",
+        "provider_type": "cloud",
+        "default_models": ["qwen-plus", "qwen-turbo", "qwen-max", "qwen2.5-coder-32b"],
+    },
+    "openai_compat": {
+        "display_name": "OpenAI 兼容",
+        "provider_type": "custom",
+        "default_models": ["default"],
+    },
+    "custom_rest": {
+        "display_name": "自定义 REST",
+        "provider_type": "custom",
+        "default_models": ["distill-v1"],
+    },
+}
+
+_BASE_URLS = {
+    "ollama": lambda: settings.ollama_base_url,
+    "deepseek": lambda: settings.deepseek_base_url,
+    "qwen": lambda: settings.qwen_base_url,
+    "openai_compat": lambda: settings.openai_compat_base_url,
+    "custom_rest": lambda: settings.custom_rest_base_url,
+}
+
 
 @router.get("/models")
-def list_models() -> dict:
-    providers = [
-        ProviderModels(provider=p, models=["default"])
-        for p in sorted(SUPPORTED_PROVIDERS)
-    ]
-    return ok(ModelListOut(providers=providers).model_dump())
+async def list_models() -> dict:
+    providers = []
+    for p in sorted(SUPPORTED_PROVIDERS):
+        meta = _PROVIDER_META.get(p, {})
+        base_url_fn = _BASE_URLS.get(p)
+        # 快速健康检查（10s 超时）
+        healthy = None
+        try:
+            prov = get_provider(p)
+            healthy = await prov.health_check()
+        except Exception:
+            healthy = False
+        providers.append({
+            "provider_id": p,
+            "display_name": meta.get("display_name", p),
+            "provider_type": meta.get("provider_type", "unknown"),
+            "base_url": base_url_fn() if base_url_fn else None,
+            "models": meta.get("default_models", ["default"]),
+            "healthy": healthy,
+        })
+    return ok({"providers": providers})
+
+
+@router.post("/models/config")
+def update_model_config(body: dict) -> dict:
+    """更新 AI 模型配置（API key、base_url 等）。
+
+    仅更新内存中的 settings 对象；持久化需写入 .env 文件。
+    """
+    provider = body.get("provider")
+    api_key = body.get("api_key")
+    base_url = body.get("base_url")
+
+    if not provider:
+        return error("INVALID_REQUEST", "provider 字段必填")
+
+    changed = []
+    if api_key is not None:
+        attr = f"{provider}_api_key"
+        if hasattr(settings, attr):
+            setattr(settings, attr, api_key)
+            changed.append(attr)
+        # 清除缓存以使新配置生效
+        from app.ai.provider_registry import clear_cache
+        clear_cache()
+    if base_url is not None:
+        attr = f"{provider}_base_url"
+        if hasattr(settings, attr):
+            setattr(settings, attr, base_url)
+            changed.append(attr)
+        from app.ai.provider_registry import clear_cache
+        clear_cache()
+
+    # 持久化到 .env 文件
+    if changed:
+        _persist_env(provider, api_key, base_url)
+
+    return ok({"updated": changed})
+
+
+def _persist_env(provider: str, api_key: str | None, base_url: str | None) -> None:
+    """将 AI 配置追加/更新到 .env 文件。"""
+    from pathlib import Path
+    # backend/ is 4 levels up from app/api/v1/models_api.py
+    env_path = Path(__file__).resolve().parent.parent.parent.parent / ".env"
+    lines: list[str] = []
+    if env_path.exists():
+        lines = env_path.read_text().splitlines()
+
+    def _set(key: str, val: str) -> None:
+        for i, ln in enumerate(lines):
+            if ln.startswith(f"{key}="):
+                lines[i] = f"{key}={val}"
+                return
+        lines.append(f"{key}={val}")
+
+    prefix = f"GS_{provider.upper()}"
+    if api_key is not None:
+        _set(f"{prefix}_API_KEY", api_key)
+    if base_url is not None:
+        _set(f"{prefix}_BASE_URL", base_url)
+
+    env_path.write_text("\n".join(lines) + "\n")
 
 
 @router.post("/models/test")

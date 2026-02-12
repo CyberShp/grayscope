@@ -41,6 +41,24 @@
             {{ row.last_sync_at ? formatDate(row.last_sync_at) : '-' }}
           </template>
         </el-table-column>
+        <el-table-column label="操作" width="200" align="center" fixed="right">
+          <template #default="{ row }">
+            <el-button
+              size="small"
+              type="primary"
+              :icon="Refresh"
+              :loading="syncingId === row.repo_id"
+              :disabled="row.last_sync_status === 'running'"
+              @click="syncRepo(row)"
+            >同步</el-button>
+            <el-button
+              size="small"
+              type="danger"
+              :icon="Delete"
+              @click="confirmDelete(row)"
+            >删除</el-button>
+          </template>
+        </el-table-column>
       </el-table>
       <el-empty v-if="!loading && !repos.length" description="暂无仓库，点击上方按钮添加" />
     </div>
@@ -68,7 +86,8 @@
 
 <script setup>
 import { ref, onMounted } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { Refresh, Delete } from '@element-plus/icons-vue'
 import api from '../../api.js'
 
 const props = defineProps({
@@ -80,6 +99,7 @@ const loading = ref(false)
 const repos = ref([])
 const showAdd = ref(false)
 const adding = ref(false)
+const syncingId = ref(null)
 const newRepo = ref({ name: '', git_url: '', default_branch: 'main' })
 
 function syncTagType(status) {
@@ -126,6 +146,36 @@ async function addRepo() {
     ElMessage.error('添加失败: ' + e.message)
   } finally {
     adding.value = false
+  }
+}
+
+async function syncRepo(row) {
+  syncingId.value = row.repo_id
+  try {
+    await api.syncRepo(row.repo_id, { branch: row.default_branch })
+    ElMessage.success(`仓库 "${row.name}" 同步已启动`)
+    // Poll for status updates
+    setTimeout(async () => {
+      await loadRepos()
+    }, 2000)
+  } catch (e) {
+    ElMessage.error('同步失败: ' + e.message)
+  } finally {
+    syncingId.value = null
+  }
+}
+
+async function confirmDelete(row) {
+  try {
+    await ElMessageBox.confirm(
+      `确定要删除仓库 "${row.name}" 吗？此操作不可撤销。`,
+      '删除仓库',
+      { confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning' }
+    )
+    // TODO: call delete API when backend supports it
+    ElMessage.info('删除功能尚未实现')
+  } catch {
+    // user cancelled
   }
 }
 

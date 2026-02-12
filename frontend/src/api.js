@@ -35,6 +35,10 @@ export default {
   // ── 仓库 ──────────────────────────────
   listRepos: (projectId) => request('GET', `/projects/${projectId}/repos`),
   createRepo: (projectId, body) => request('POST', `/projects/${projectId}/repos`, body),
+  syncRepo: (repoId, body = {}) => request('POST', `/repos/${repoId}/sync`, {
+    revision: { branch: body.branch || 'main', tag: body.tag || null, commit: body.commit || null },
+    depth: body.depth ?? 1,
+  }),
 
   // ── 分析任务 ──────────────────────────
   createTask: (body) => request('POST', '/analysis/tasks', body),

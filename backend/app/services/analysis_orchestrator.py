@@ -202,9 +202,17 @@ def run_task(db: Session, task_id: str) -> None:
             artifacts = module_result["artifacts"]
             warnings = module_result["warnings"]
 
-            # AI 增强分析（尽力而为，不阻塞主流程）
+            # AI 增强分析
             ai_summary_data: dict[str, Any] = {}
-            if findings and ai_config:
+            ai_provider = ai_config.get("provider", "") if ai_config else ""
+            ai_model = ai_config.get("model", "") if ai_config else ""
+            ai_skip = not ai_provider or ai_provider.lower() in ("none", "", "skip")
+
+            if findings and not ai_skip:
+                logger.info(
+                    "开始 AI 增强 [%s] provider=%s model=%s findings=%d",
+                    get_display_name(mod_id), ai_provider, ai_model, len(findings),
+                )
                 try:
                     snippets = _collect_source_snippets(
                         ctx["workspace_path"], ctx["target"]
@@ -212,12 +220,25 @@ def run_task(db: Session, task_id: str) -> None:
                     ai_summary_data = enrich_module(
                         mod_id, findings, snippets, ai_config
                     )
+                    if ai_summary_data.get("success"):
+                        logger.info("AI 增强成功 [%s]", get_display_name(mod_id))
+                    else:
+                        err = ai_summary_data.get("error") or ai_summary_data.get("ai_summary", "")
+                        logger.warning("AI 增强未成功 [%s]: %s", get_display_name(mod_id), err)
                 except Exception as ai_exc:
-                    logger.warning("AI 增强失败 [%s]: %s", get_display_name(mod_id), ai_exc)
+                    logger.warning("AI 增强异常 [%s]: %s", get_display_name(mod_id), ai_exc)
                     ai_summary_data = {
-                        "ai_summary": f"AI 增强不可用: {ai_exc}",
+                        "ai_summary": f"AI 增强失败: {ai_exc}",
                         "success": False,
+                        "error": str(ai_exc),
                     }
+            elif ai_skip:
+                logger.info("跳过 AI 增强 [%s]: provider=%s", get_display_name(mod_id), ai_provider)
+                ai_summary_data = {
+                    "ai_summary": "未启用 AI 增强（未选择 AI 模型）",
+                    "success": False,
+                    "skipped": True,
+                }
 
             task_repo.update_module_result(
                 db, mr.id,

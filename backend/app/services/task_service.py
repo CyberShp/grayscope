@@ -99,6 +99,8 @@ def get_task_status(db: Session, task_id: str) -> TaskStatusOut:
 
     return TaskStatusOut(
         task_id=task.task_id,
+        project_id=task.project_id,
+        repo_id=task.repo_id,
         task_type=task.task_type,
         status=task.status,
         progress=TaskProgress(
@@ -138,6 +140,8 @@ def get_task_results(db: Session, task_id: str) -> TaskResultsOut:
 
     return TaskResultsOut(
         task_id=task.task_id,
+        project_id=task.project_id,
+        repo_id=task.repo_id,
         status=task.status,
         aggregate_risk_score=task.aggregate_risk_score,
         modules=modules,

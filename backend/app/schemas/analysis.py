@@ -75,6 +75,8 @@ class TaskProgress(BaseModel):
 
 class TaskStatusOut(BaseModel):
     task_id: str
+    project_id: int = 0
+    repo_id: int = 0
     task_type: str
     status: str
     progress: TaskProgress
@@ -94,6 +96,8 @@ class ModuleResultSummary(BaseModel):
 
 class TaskResultsOut(BaseModel):
     task_id: str
+    project_id: int = 0
+    repo_id: int = 0
     status: str
     aggregate_risk_score: Optional[float] = None
     modules: list[ModuleResultSummary] = []

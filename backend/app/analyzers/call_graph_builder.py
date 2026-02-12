@@ -169,10 +169,12 @@ def analyze(ctx: AnalyzeContext) -> ModuleResult:
                 "risk_type": "high_fan_out",
                 "severity": "S2",
                 "risk_score": min(0.5 + fo * 0.03, 0.9),
-                "title": f"High fan-out: {fn} calls {fo} functions",
+                "title": f"高扇出枢纽函数: {fn}() 调用了 {fo} 个函数",
                 "description": (
-                    f"Function {fn} has fan-out={fo}. Changes to callees "
-                    "may have wide impact."
+                    f"函数 {fn}() 的调用扇出度为 {fo}，意味着它直接依赖 {fo} 个其他函数。"
+                    f"这使得 {fn}() 成为一个关键的集成枢纽，任何被调用函数的接口变更或行为改变"
+                    f"都可能影响 {fn}() 的正确性。需要：(1) 为 {fn}() 建立集成测试覆盖所有调用路径；"
+                    f"(2) 当任一被调用函数变更时对 {fn}() 进行回归测试。"
                 ),
                 "file_path": "",
                 "symbol_name": fn,
@@ -193,10 +195,12 @@ def analyze(ctx: AnalyzeContext) -> ModuleResult:
                 "risk_type": "deep_impact_surface",
                 "severity": "S2",
                 "risk_score": min(0.5 + fi * 0.02, 0.85),
-                "title": f"High fan-in: {fn} called by {fi} functions",
+                "title": f"高扇入关键函数: {fn}() 被 {fi} 个函数调用",
                 "description": (
-                    f"Function {fn} has fan-in={fi}. Changes to this function "
-                    "may impact many callers."
+                    f"函数 {fn}() 的调用扇入度为 {fi}，意味着有 {fi} 个不同的函数依赖于它。"
+                    f"对 {fn}() 的任何修改（参数变更、返回值语义变化、新增错误路径）都可能"
+                    f"影响所有 {fi} 个调用者的正确性。需要：(1) 对 {fn}() 的接口契约进行严格测试；"
+                    f"(2) 修改前评估对所有调用者的影响；(3) 变更后运行全量回归测试。"
                 ),
                 "file_path": "",
                 "symbol_name": fn,

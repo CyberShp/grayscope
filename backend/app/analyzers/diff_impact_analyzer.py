@@ -206,10 +206,12 @@ def analyze(ctx: AnalyzeContext) -> ModuleResult:
                 "risk_type": "changed_core_path",
                 "severity": "S2" if len(callers) >= 3 else "S3",
                 "risk_score": min(0.5 + len(callers) * 0.05, 0.9),
-                "title": f"Changed function: {fn}",
+                "title": f"变更函数: {fn}()",
                 "description": (
-                    f"Function {fn} in {file_path} was modified. "
-                    f"Impacts {len(callers)} callers."
+                    f"文件 {file_path} 中的函数 {fn}() 发生了代码变更。"
+                    f"该变更影响 {len(callers)} 个调用者" + (f"（{', '.join(callers[:5])}）" if callers else "") + "。"
+                    f"需要：(1) 审查变更内容确认逻辑正确；(2) 运行 {fn}() 的单元测试验证功能不变；"
+                    f"(3) 对受影响的调用者进行回归测试。"
                 ),
                 "file_path": file_path,
                 "symbol_name": fn,
@@ -233,10 +235,12 @@ def analyze(ctx: AnalyzeContext) -> ModuleResult:
                 "risk_type": "transitive_impact",
                 "severity": "S2" if info["depth"] == 1 else "S3",
                 "risk_score": max(0.7 - info["depth"] * 0.15, 0.3),
-                "title": f"Transitive impact on {sym} ({info['depth']}hop from {info['changed_by']})",
+                "title": f"{sym}() 受到传递性影响（距变更函数 {info['changed_by']}() {info['depth']} 跳）",
                 "description": (
-                    f"{sym} is a {info['type']} dependency of changed "
-                    f"function {info['changed_by']}."
+                    f"函数 {sym}() 通过调用链间接依赖于被修改的函数 {info['changed_by']}()，"
+                    f"影响传播距离为 {info['depth']} 跳。虽然 {sym}() 自身代码未变更，"
+                    f"但其依赖的上游函数行为可能已改变。需要验证 {sym}() 在变更后仍然"
+                    f"按照预期工作，建议运行其现有测试并关注返回值和副作用是否一致。"
                 ),
                 "file_path": "",
                 "symbol_name": sym,

@@ -188,10 +188,13 @@ def analyze(ctx: AnalyzeContext) -> ModuleResult:
             "risk_type": "race_write_without_lock",
             "severity": "S1",
             "risk_score": 0.85,
-            "title": f"Unprotected write to '{sa.var_name}' in {sa.func_name}",
+            "title": f"{sa.func_name}() 中对共享变量 '{sa.var_name}' 的无锁写入",
             "description": (
-                f"Global/shared variable '{sa.var_name}' is written without "
-                f"holding any lock in function {sa.func_name}."
+                f"函数 {sa.func_name}() 在未持有任何锁的情况下写入全局/共享变量 '{sa.var_name}'。"
+                f"在多线程环境中，无锁写入是数据竞态（data race）的典型来源，可能导致数据损坏、"
+                f"读取到不一致的中间状态，甚至程序崩溃。需要：(1) 在写入前获取对应的互斥锁；"
+                f"(2) 或使用原子操作（如 atomic_store）替代普通赋值；"
+                f"(3) 使用 ThreadSanitizer (TSan) 工具进行运行时竞态检测。"
             ),
             "file_path": sa.file_path,
             "symbol_name": sa.func_name,
@@ -228,11 +231,14 @@ def analyze(ctx: AnalyzeContext) -> ModuleResult:
                                 "risk_type": "lock_order_inversion",
                                 "severity": "S0",
                                 "risk_score": 0.95,
-                                "title": f"Lock order inversion: {la}/{lb} between {fn_a} and {fn_b}",
+                                "title": f"锁顺序反转: {fn_a}() 和 {fn_b}() 之间的 {la}/{lb}",
                                 "description": (
-                                    f"{fn_a} acquires {la} then {lb}, "
-                                    f"but {fn_b} acquires {lb} then {la}. "
-                                    "Potential deadlock."
+                                    f"函数 {fn_a}() 先获取锁 {la} 再获取锁 {lb}，"
+                                    f"但函数 {fn_b}() 先获取锁 {lb} 再获取锁 {la}。"
+                                    f"这是经典的 ABBA 死锁模式：当两个线程分别执行这两个函数时，"
+                                    f"线程A持有 {la} 等待 {lb}，线程B持有 {lb} 等待 {la}，"
+                                    f"双方永远无法继续执行。需要统一所有函数中的锁获取顺序，"
+                                    f"或使用 trylock 超时机制避免死锁。"
                                 ),
                                 "file_path": "",
                                 "symbol_name": f"{fn_a}/{fn_b}",
@@ -262,10 +268,12 @@ def analyze(ctx: AnalyzeContext) -> ModuleResult:
                 "risk_type": "atomicity_gap",
                 "severity": "S1",
                 "risk_score": 0.8,
-                "title": f"Lock not released in {sym.name}: {unreleased}",
+                "title": f"{sym.name}() 中锁未释放: {unreleased}",
                 "description": (
-                    f"Locks {unreleased} acquired but not released in {sym.name}. "
-                    "May cause deadlock on error paths."
+                    f"函数 {sym.name}() 获取了锁 {unreleased}，但在函数体内未找到对应的释放操作。"
+                    f"这可能导致：(1) 同一线程再次获取该锁时死锁（非递归锁）；"
+                    f"(2) 其他线程永远无法获取该锁。特别注意错误路径：如果函数在获取锁后遇到错误"
+                    f"直接 return，锁将永远不会被释放。需要确保所有退出路径（包括异常路径）都释放了锁。"
                 ),
                 "file_path": rel_path,
                 "symbol_name": sym.name,

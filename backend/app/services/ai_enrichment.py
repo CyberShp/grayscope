@@ -163,17 +163,33 @@ def enrich_module(
     })
 
     # 调用 AI 模型（同步封装，适用于工作线程）
+    logger.info("正在调用 AI 模型: %s/%s (消息数=%d)", provider_name, model, len(messages))
     ai_result = _call_model_sync(provider_name, model, messages)
 
     # 解析 AI 响应
     ai_content = ai_result.get("content", "")
     test_suggestions = _extract_test_suggestions(ai_content)
 
+    if not ai_result.get("success"):
+        err_msg = ai_result.get("error", "未知错误")
+        logger.warning("AI 调用失败 [%s]: %s", display_name, err_msg)
+        return {
+            "ai_summary": f"{display_name} AI 增强不可用: {err_msg}",
+            "test_suggestions": [],
+            "enriched_findings": findings,
+            "success": False,
+            "error": err_msg,
+            "usage": ai_result.get("usage", {}),
+            "provider": provider_name,
+            "model": model,
+        }
+
+    logger.info("AI 调用成功 [%s]: 响应长度=%d", display_name, len(ai_content))
     return {
         "ai_summary": ai_content[:5000] if ai_content else f"{display_name} AI 增强不可用",
         "test_suggestions": test_suggestions,
         "enriched_findings": findings,
-        "success": ai_result.get("success", False),
+        "success": True,
         "usage": ai_result.get("usage", {}),
         "provider": provider_name,
         "model": model,

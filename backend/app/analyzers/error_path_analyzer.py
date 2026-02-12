@@ -113,11 +113,13 @@ def analyze(ctx: AnalyzeContext) -> ModuleResult:
                     "risk_type": "missing_cleanup",
                     "severity": "S1",
                     "risk_score": 0.85,
-                    "title": f"Missing cleanup in {sym.name}: {missing}",
+                    "title": f"{sym.name}() 中缺少资源清理: {missing}",
                     "description": (
-                        f"Resources allocated ({expected_cleanup}) but cleanup "
-                        f"incomplete ({observed_cleanup}). "
-                        f"{len(error_returns)} error return paths may leak."
+                        f"函数 {sym.name}() 分配了资源（{', '.join(expected_cleanup)}），但清理操作不完整"
+                        f"（仅执行了 {', '.join(observed_cleanup) if observed_cleanup else '无'}）。"
+                        f"该函数有 {len(error_returns)} 条错误返回路径，这些路径在异常退出时可能跳过资源释放，"
+                        f"导致内存泄漏、文件句柄泄漏或锁未释放等问题。"
+                        f"需要验证每条错误路径是否都执行了完整的资源释放操作。"
                     ),
                     "file_path": rel_path,
                     "symbol_name": sym.name,
@@ -139,11 +141,14 @@ def analyze(ctx: AnalyzeContext) -> ModuleResult:
                     "risk_type": "inconsistent_errno_mapping",
                     "severity": "S2",
                     "risk_score": 0.6,
-                    "title": f"Multiple error codes in {sym.name}",
+                    "title": f"{sym.name}() 中存在多种错误返回码",
                     "description": (
-                        f"Function uses {len(set(error_returns))} distinct error "
-                        f"return values: {sorted(set(error_returns))[:6]}. "
-                        "Verify each maps to correct errno."
+                        f"函数 {sym.name}() 使用了 {len(set(error_returns))} 种不同的错误返回值: "
+                        f"{', '.join(sorted(set(error_returns))[:6])}。"
+                        f"多种错误返回码增加了调用者正确处理每种错误的难度。"
+                        f"需要验证：(1) 每种错误码是否对应正确的错误场景；"
+                        f"(2) 调用者是否区分处理了不同的错误码；"
+                        f"(3) 文档中是否记录了所有可能的错误返回值。"
                     ),
                     "file_path": rel_path,
                     "symbol_name": sym.name,
@@ -164,11 +169,13 @@ def analyze(ctx: AnalyzeContext) -> ModuleResult:
                     "risk_type": "silent_error_swallow",
                     "severity": "S1",
                     "risk_score": 0.75,
-                    "title": f"Error returns without goto cleanup in {sym.name}",
+                    "title": f"{sym.name}() 中错误返回路径缺少统一清理",
                     "description": (
-                        f"Function holds resources {expected_cleanup} and has "
-                        f"{len(error_returns)} error returns but no goto cleanup "
-                        "pattern. Each error path must be verified individually."
+                        f"函数 {sym.name}() 持有资源（{', '.join(expected_cleanup)}）并且有 "
+                        f"{len(error_returns)} 条错误返回路径，但未使用 goto 集中清理模式。"
+                        f"这意味着每条错误返回路径都需要独立处理资源释放，容易遗漏。"
+                        f"如果某条路径忘记释放资源，将导致泄漏。建议：(1) 逐条检查每个 return 前是否释放了所有资源；"
+                        f"(2) 考虑重构为 goto 集中清理模式以降低遗漏风险。"
                     ),
                     "file_path": rel_path,
                     "symbol_name": sym.name,
@@ -194,8 +201,12 @@ def analyze(ctx: AnalyzeContext) -> ModuleResult:
                         "risk_type": "missing_cleanup",
                         "severity": "S0",
                         "risk_score": 0.95,
-                        "title": f"Goto target missing in {sym.name}",
-                        "description": f"Labels {missing_labels} referenced but not defined",
+                        "title": f"{sym.name}() 中 goto 目标标签缺失",
+                        "description": (
+                            f"函数 {sym.name}() 中引用了标签 {missing_labels}，但这些标签在函数体内未定义。"
+                            f"这将导致编译错误或运行时跳转到未定义位置，是严重的代码缺陷。"
+                            f"需要立即检查并修复缺失的标签定义。"
+                        ),
                         "file_path": rel_path,
                         "symbol_name": sym.name,
                         "line_start": sym.line_start,

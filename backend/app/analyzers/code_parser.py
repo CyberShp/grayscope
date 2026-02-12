@@ -180,37 +180,147 @@ class CodeParser:
             cfg.edges.append(CFGEdge(entry, exit_n))
             return cfg
 
-        prev = entry
-        for child in body.children:
-            if child.type in ("{", "}"):
-                continue
-            line = child.start_point[0] + 1
-            text = source[child.start_byte : child.end_byte].decode(errors="replace")[:80]
+        def _src(node) -> str:
+            return source[node.start_byte : node.end_byte].decode(errors="replace")
 
-            if child.type == "if_statement":
-                cond = child.child_by_field_name("condition")
-                cond_text = source[cond.start_byte : cond.end_byte].decode(errors="replace") if cond else "?"
+        def _visit_block(stmts, prev_id: str) -> str:
+            """递归处理一组语句，返回最后一个节点的 id。"""
+            prev = prev_id
+            for child in stmts:
+                if child.type in ("{", "}", "comment"):
+                    continue
+                prev = _visit_stmt(child, prev)
+            return prev
+
+        def _visit_stmt(node, prev_id: str) -> str:
+            """递归处理单条语句，返回最后一个节点 id。"""
+            line = node.start_point[0] + 1
+
+            # ---- if / else if / else ----
+            if node.type == "if_statement":
+                cond = node.child_by_field_name("condition")
+                cond_text = _src(cond) if cond else "?"
                 branch = _new("branch", f"if {cond_text}", line)
-                cfg.edges.append(CFGEdge(prev, branch))
-                true_n = _new("statement", "then", line)
-                cfg.edges.append(CFGEdge(branch, true_n, "true"))
-                false_n = _new("statement", "else", line)
-                cfg.edges.append(CFGEdge(branch, false_n, "false"))
-                merge = _new("statement", "merge", line)
-                cfg.edges.append(CFGEdge(true_n, merge))
-                cfg.edges.append(CFGEdge(false_n, merge))
-                prev = merge
-            elif child.type == "return_statement":
-                ret = _new("statement", text.strip(), line)
-                cfg.edges.append(CFGEdge(prev, ret))
-                cfg.edges.append(CFGEdge(ret, exit_n))
-                prev = _new("statement", "unreachable", line)
-            else:
-                stmt = _new("statement", text.strip()[:60], line)
-                cfg.edges.append(CFGEdge(prev, stmt))
-                prev = stmt
+                cfg.edges.append(CFGEdge(prev_id, branch))
 
-        cfg.edges.append(CFGEdge(prev, exit_n))
+                merge = _new("statement", "merge", line)
+
+                # then 分支 (consequence)
+                conseq = node.child_by_field_name("consequence")
+                if conseq:
+                    true_entry = _new("statement", "then", line)
+                    cfg.edges.append(CFGEdge(branch, true_entry, "true"))
+                    if conseq.type == "compound_statement":
+                        true_exit = _visit_block(conseq.children, true_entry)
+                    else:
+                        true_exit = _visit_stmt(conseq, true_entry)
+                    cfg.edges.append(CFGEdge(true_exit, merge))
+                else:
+                    cfg.edges.append(CFGEdge(branch, merge, "true"))
+
+                # else 分支 (alternative) — 可能是 else-if 或 else {}
+                alt = node.child_by_field_name("alternative")
+                if alt:
+                    if alt.type == "if_statement":
+                        # else-if: 递归处理，false 边直接连到下一个 if
+                        else_exit = _visit_stmt(alt, branch)
+                        # 给 branch → alt 加 "false" 标签
+                        # 找到最后添加的 branch→alt 边并标注
+                        for e in reversed(cfg.edges):
+                            if e.src == branch and e.label == "":
+                                e.label = "false"
+                                break
+                        cfg.edges.append(CFGEdge(else_exit, merge))
+                    elif alt.type == "else_clause":
+                        false_entry = _new("statement", "else", line)
+                        cfg.edges.append(CFGEdge(branch, false_entry, "false"))
+                        # else 内部可能是 compound_statement 或单条语句
+                        body_node = None
+                        for ch in alt.children:
+                            if ch.type not in ("else",):
+                                body_node = ch
+                        if body_node and body_node.type == "compound_statement":
+                            false_exit = _visit_block(body_node.children, false_entry)
+                        elif body_node:
+                            false_exit = _visit_stmt(body_node, false_entry)
+                        else:
+                            false_exit = false_entry
+                        cfg.edges.append(CFGEdge(false_exit, merge))
+                    else:
+                        # 其他情况 (如直接 compound_statement)
+                        false_entry = _new("statement", "else", line)
+                        cfg.edges.append(CFGEdge(branch, false_entry, "false"))
+                        if alt.type == "compound_statement":
+                            false_exit = _visit_block(alt.children, false_entry)
+                        else:
+                            false_exit = _visit_stmt(alt, false_entry)
+                        cfg.edges.append(CFGEdge(false_exit, merge))
+                else:
+                    cfg.edges.append(CFGEdge(branch, merge, "false"))
+
+                return merge
+
+            # ---- switch/case ----
+            if node.type == "switch_statement":
+                cond = node.child_by_field_name("condition")
+                cond_text = _src(cond) if cond else "?"
+                sw = _new("branch", f"switch {cond_text}", line)
+                cfg.edges.append(CFGEdge(prev_id, sw))
+                merge = _new("statement", "merge", line)
+                body_node = node.child_by_field_name("body")
+                if body_node:
+                    for ch in body_node.children:
+                        if ch.type == "case_statement":
+                            case_label = _src(ch.children[1]) if len(ch.children) > 1 else "default"
+                            case_n = _new("statement", f"case {case_label[:30]}", ch.start_point[0] + 1)
+                            cfg.edges.append(CFGEdge(sw, case_n, case_label[:30]))
+                            case_end = _visit_block(ch.children[2:], case_n) if len(ch.children) > 2 else case_n
+                            cfg.edges.append(CFGEdge(case_end, merge))
+                else:
+                    cfg.edges.append(CFGEdge(sw, merge))
+                return merge
+
+            # ---- for / while / do-while 循环 ----
+            if node.type in ("for_statement", "while_statement", "do_statement"):
+                cond = node.child_by_field_name("condition")
+                cond_text = _src(cond) if cond else "true"
+                loop_kind = node.type.split("_")[0]  # for / while / do
+                loop_br = _new("branch", f"{loop_kind} {cond_text}", line)
+                cfg.edges.append(CFGEdge(prev_id, loop_br))
+                # 循环体
+                body_node = node.child_by_field_name("body")
+                if body_node:
+                    loop_entry = _new("statement", f"{loop_kind}_body", line)
+                    cfg.edges.append(CFGEdge(loop_br, loop_entry, "true"))
+                    if body_node.type == "compound_statement":
+                        loop_exit = _visit_block(body_node.children, loop_entry)
+                    else:
+                        loop_exit = _visit_stmt(body_node, loop_entry)
+                    cfg.edges.append(CFGEdge(loop_exit, loop_br, "back"))
+                merge = _new("statement", "loop_exit", line)
+                cfg.edges.append(CFGEdge(loop_br, merge, "false"))
+                return merge
+
+            # ---- return ----
+            if node.type == "return_statement":
+                text = _src(node)[:80].strip()
+                ret = _new("statement", text, line)
+                cfg.edges.append(CFGEdge(prev_id, ret))
+                cfg.edges.append(CFGEdge(ret, exit_n))
+                return _new("statement", "unreachable", line)
+
+            # ---- compound_statement (嵌套块) ----
+            if node.type == "compound_statement":
+                return _visit_block(node.children, prev_id)
+
+            # ---- 其他语句 ----
+            text = _src(node)[:60].strip()
+            stmt = _new("statement", text, line)
+            cfg.edges.append(CFGEdge(prev_id, stmt))
+            return stmt
+
+        last = _visit_block(body.children, entry)
+        cfg.edges.append(CFGEdge(last, exit_n))
         return cfg
 
     @staticmethod

@@ -119,9 +119,32 @@
             <el-table-column type="expand">
               <template #default="{ row }">
                 <div style="padding: 12px 24px;">
-                  <p style="margin-bottom: 8px;"><strong>描述:</strong> {{ row.description }}</p>
-                  <p v-if="row.symbol_name" style="margin-bottom: 8px;"><strong>函数:</strong> <code>{{ row.symbol_name }}()</code></p>
-                  <p v-if="row.line_start" style="margin-bottom: 8px;"><strong>行号:</strong> {{ row.line_start }} - {{ row.line_end }}</p>
+                  <!-- 风险原因高亮区 -->
+                  <div class="gs-risk-detail-block">
+                    <div class="gs-risk-detail-title">
+                      <el-icon style="color:var(--gs-warning);"><WarningFilled /></el-icon>
+                      为什么这里有风险？
+                    </div>
+                    <p class="gs-risk-detail-desc">{{ row.description || '暂无详细描述' }}</p>
+                    <div v-if="row.risk_type" class="gs-risk-detail-type">
+                      <span style="color:var(--gs-text-muted);font-size:12px;">风险类型:</span>
+                      <el-tag size="small" :type="riskTypeTag(row.risk_type)">{{ riskTypeLabel(row.risk_type) }}</el-tag>
+                    </div>
+                  </div>
+
+                  <!-- 代码位置（可点击跳转） -->
+                  <div v-if="row.file_path" class="gs-risk-location-block">
+                    <strong>代码位置:</strong>
+                    <router-link v-if="taskProjectId" :to="sourceLink(row)" class="gs-source-link" style="margin-left:8px;">
+                      {{ row.file_path }}<span v-if="row.line_start">:{{ row.line_start }}<span v-if="row.line_end">-{{ row.line_end }}</span></span>
+                    </router-link>
+                    <span v-else style="font-family:var(--gs-font-mono);font-size:12px;margin-left:8px;">
+                      {{ row.file_path }}<span v-if="row.line_start">:{{ row.line_start }}</span>
+                    </span>
+                    <span v-if="row.symbol_name" style="margin-left:12px;">
+                      <strong>函数:</strong> <code>{{ row.symbol_name }}()</code>
+                    </span>
+                  </div>
 
                   <!-- 推荐测试设计 -->
                   <div class="gs-inline-test-suggestion">
@@ -154,21 +177,180 @@
             <el-table-column label="模块" width="130">
               <template #default="{ row }">{{ getDisplayName(row.module_id) }}</template>
             </el-table-column>
-            <el-table-column prop="risk_type" label="风险类型" width="180" show-overflow-tooltip />
-            <el-table-column prop="title" label="标题" min-width="200" show-overflow-tooltip />
-            <el-table-column prop="file_path" label="文件" min-width="160" show-overflow-tooltip>
+            <el-table-column prop="risk_type" label="风险类型" width="160" show-overflow-tooltip>
               <template #default="{ row }">
-                <span style="font-family: var(--gs-font-mono); font-size: 11px;">{{ row.file_path }}</span>
+                <el-tag size="small" :type="riskTypeTag(row.risk_type)">{{ riskTypeLabel(row.risk_type) }}</el-tag>
               </template>
             </el-table-column>
-            <el-table-column prop="risk_score" label="评分" width="70" sortable>
+            <el-table-column prop="title" label="标题" min-width="180" show-overflow-tooltip />
+            <el-table-column label="风险原因" min-width="220">
               <template #default="{ row }">
-                <span :style="{ color: riskColor(row.risk_score || 0), fontWeight: 600 }">
-                  {{ row.risk_score != null ? (row.risk_score * 100).toFixed(0) + '%' : '-' }}
-                </span>
+                <div class="gs-risk-reason">
+                  <span class="gs-risk-reason-text">{{ row.description || '-' }}</span>
+                </div>
+              </template>
+            </el-table-column>
+            <el-table-column label="文件位置" min-width="200">
+              <template #default="{ row }">
+                <div v-if="row.file_path" class="gs-source-link-wrap">
+                  <router-link v-if="taskProjectId"
+                    :to="sourceLink(row)"
+                    class="gs-source-link"
+                    :title="row.file_path">
+                    <span class="gs-source-file">{{ shortenPath(row.file_path) }}</span>
+                    <span v-if="row.line_start" class="gs-source-line">:{{ row.line_start }}<span v-if="row.line_end && row.line_end !== row.line_start">-{{ row.line_end }}</span></span>
+                  </router-link>
+                  <span v-else class="gs-source-link" style="cursor:default;">
+                    <span class="gs-source-file">{{ shortenPath(row.file_path) }}</span>
+                    <span v-if="row.line_start" class="gs-source-line">:{{ row.line_start }}</span>
+                  </span>
+                  <span v-if="row.symbol_name" class="gs-source-symbol">{{ row.symbol_name }}()</span>
+                </div>
+                <span v-else style="color:var(--gs-text-muted);">-</span>
+              </template>
+            </el-table-column>
+            <el-table-column prop="risk_score" label="评分" width="80" sortable>
+              <template #default="{ row }">
+                <div style="display:flex;align-items:center;gap:4px;">
+                  <div class="gs-risk-bar" style="width:40px;">
+                    <div class="gs-risk-bar-fill" :style="{ width: (row.risk_score || 0) * 100 + '%', background: riskColor(row.risk_score || 0) }"></div>
+                  </div>
+                  <span :style="{ color: riskColor(row.risk_score || 0), fontWeight: 600, fontSize: '12px' }">
+                    {{ row.risk_score != null ? (row.risk_score * 100).toFixed(0) + '%' : '-' }}
+                  </span>
+                </div>
               </template>
             </el-table-column>
           </el-table>
+        </el-tab-pane>
+
+        <!-- 覆盖率 -->
+        <el-tab-pane label="覆盖率" name="coverage">
+          <div v-if="coverageFindings.length" class="gs-coverage-section">
+            <!-- 覆盖率汇总 -->
+            <div class="gs-stat-row gs-section" style="grid-template-columns: repeat(3, 1fr);">
+              <div class="gs-stat-card">
+                <div class="gs-stat-label">平均行覆盖率</div>
+                <div class="gs-stat-value" :style="{ color: covColor(avgLineCoverage) }">{{ (avgLineCoverage * 100).toFixed(0) }}%</div>
+              </div>
+              <div class="gs-stat-card">
+                <div class="gs-stat-label">平均分支覆盖率</div>
+                <div class="gs-stat-value" :style="{ color: covColor(avgBranchCoverage) }">{{ (avgBranchCoverage * 100).toFixed(0) }}%</div>
+              </div>
+              <div class="gs-stat-card">
+                <div class="gs-stat-label">零覆盖文件</div>
+                <div class="gs-stat-value" :style="{ color: zeroCoverageCount > 0 ? '#D4333F' : '#00AA00' }">{{ zeroCoverageCount }}</div>
+              </div>
+            </div>
+
+            <!-- 文件级覆盖率列表 -->
+            <el-table :data="coverageFindings" size="small" class="gs-table" :default-sort="{ prop: 'line_coverage', order: 'ascending' }">
+              <el-table-column label="文件路径" min-width="280">
+                <template #default="{ row }">
+                  <router-link v-if="row.file_path && taskProjectId"
+                    :to="`/projects/${taskProjectId}/code?path=${encodeURIComponent(row.file_path)}`"
+                    class="gs-file-link">
+                    {{ row.file_path }}
+                  </router-link>
+                  <span v-else class="gs-file-path">{{ row.file_path || '-' }}</span>
+                </template>
+              </el-table-column>
+              <el-table-column label="行覆盖率" width="200" prop="line_coverage" sortable>
+                <template #default="{ row }">
+                  <div style="display: flex; align-items: center; gap: 8px;">
+                    <div class="gs-cov-bar-wrap">
+                      <div class="gs-cov-bar" :class="covBarClass(row.line_coverage)" :style="{ width: (row.line_coverage || 0) * 100 + '%' }"></div>
+                    </div>
+                    <span style="font-size: 12px; font-weight: 600; min-width: 36px;">{{ ((row.line_coverage || 0) * 100).toFixed(0) }}%</span>
+                  </div>
+                </template>
+              </el-table-column>
+              <el-table-column label="分支覆盖率" width="200" prop="branch_coverage" sortable>
+                <template #default="{ row }">
+                  <div style="display: flex; align-items: center; gap: 8px;">
+                    <div class="gs-cov-bar-wrap">
+                      <div class="gs-cov-bar" :class="covBarClass(row.branch_coverage)" :style="{ width: (row.branch_coverage || 0) * 100 + '%' }"></div>
+                    </div>
+                    <span style="font-size: 12px; font-weight: 600; min-width: 36px;">{{ ((row.branch_coverage || 0) * 100).toFixed(0) }}%</span>
+                  </div>
+                </template>
+              </el-table-column>
+              <el-table-column label="风险" width="100" prop="risk_score" sortable>
+                <template #default="{ row }">
+                  <span :style="{ color: riskColor(row.risk_score || 0), fontWeight: 600 }">
+                    {{ row.risk_score != null ? (row.risk_score * 100).toFixed(0) + '%' : '-' }}
+                  </span>
+                </template>
+              </el-table-column>
+              <el-table-column label="风险原因" min-width="200" show-overflow-tooltip>
+                <template #default="{ row }">
+                  <span style="font-size:12px;color:var(--gs-text-secondary);">{{ row.title || row.description || '-' }}</span>
+                </template>
+              </el-table-column>
+            </el-table>
+          </div>
+          <el-empty v-else description="暂无覆盖率数据，请确保启用了 coverage_map 分析器" :image-size="80" />
+        </el-tab-pane>
+
+        <!-- AI 增强 -->
+        <el-tab-pane name="ai">
+          <template #label>
+            AI 增强
+            <el-tag v-if="aiSuccessCount" type="success" size="small" style="margin-left:4px;">{{ aiSuccessCount }}</el-tag>
+            <el-tag v-else-if="aiFailCount" type="danger" size="small" style="margin-left:4px;">失败</el-tag>
+          </template>
+
+          <div v-if="!aiEnabled" class="gs-ai-empty">
+            <el-icon :size="48" color="#ccc"><WarningFilled /></el-icon>
+            <p>本次分析未启用 AI 增强，或 AI 模型不可用</p>
+            <p style="font-size:12px;color:var(--gs-text-muted);">
+              请在"设置 → AI 模型管理"中配置可用的 AI 模型（如 DeepSeek、Ollama 等），<br>
+              然后在新建分析时选择 AI 提供商和模型
+            </p>
+          </div>
+
+          <div v-else class="gs-ai-results">
+            <div v-for="(summary, modId) in aiSummaries" :key="modId" class="gs-ai-module-card">
+              <div class="gs-ai-module-header">
+                <span class="gs-ai-module-name">{{ getDisplayName(modId) }}</span>
+                <el-tag :type="summary.success ? 'success' : 'danger'" size="small">
+                  {{ summary.success ? 'AI 分析完成' : (summary.skipped ? '已跳过' : 'AI 不可用') }}
+                </el-tag>
+                <span v-if="summary.provider" style="font-size:11px;color:var(--gs-text-muted);margin-left:auto;">
+                  {{ summary.provider }}/{{ summary.model }}
+                </span>
+              </div>
+
+              <div v-if="summary.success && summary.ai_summary" class="gs-ai-summary-content">
+                <div class="gs-ai-section-title">AI 风险分析</div>
+                <pre class="gs-ai-text">{{ summary.ai_summary }}</pre>
+              </div>
+
+              <div v-if="summary.success && summary.test_suggestions && summary.test_suggestions.length" class="gs-ai-suggestions">
+                <div class="gs-ai-section-title">AI 测试建议</div>
+                <div v-for="(sug, i) in summary.test_suggestions" :key="i" class="gs-ai-suggestion-item">
+                  <template v-if="sug.type === 'raw_text'">
+                    <pre class="gs-ai-text">{{ sug.content }}</pre>
+                  </template>
+                  <template v-else>
+                    <div><strong>{{ sug.title || sug.name || `测试用例 ${i+1}` }}</strong></div>
+                    <div v-if="sug.description || sug.steps" style="font-size:12px;color:var(--gs-text-secondary);">
+                      {{ sug.description || sug.steps }}
+                    </div>
+                  </template>
+                </div>
+              </div>
+
+              <div v-if="!summary.success && summary.ai_summary" class="gs-ai-error">
+                <el-icon color="#D50000"><WarningFilled /></el-icon>
+                <span>{{ summary.ai_summary }}</span>
+              </div>
+
+              <div v-if="summary.usage && summary.usage.total_tokens" class="gs-ai-usage">
+                Token 用量: {{ summary.usage.prompt_tokens || 0 }} + {{ summary.usage.completion_tokens || 0 }} = {{ summary.usage.total_tokens }}
+              </div>
+            </div>
+          </div>
         </el-tab-pane>
 
         <!-- 导出 -->
@@ -206,6 +388,7 @@ import { RadarChart } from 'echarts/charts'
 import { TitleComponent, TooltipComponent, LegendComponent } from 'echarts/components'
 import VChart from 'vue-echarts'
 import { ElMessage } from 'element-plus'
+import { WarningFilled } from '@element-plus/icons-vue'
 import api from '../api.js'
 import { useRiskColor } from '../composables/useRiskColor.js'
 import { useModuleNames } from '../composables/useModuleNames.js'
@@ -216,7 +399,7 @@ use([CanvasRenderer, RadarChart, TitleComponent, TooltipComponent, LegendCompone
 
 export default {
   name: 'TaskDetail',
-  components: { VChart, EvidenceRenderer },
+  components: { VChart, EvidenceRenderer, WarningFilled },
   props: { taskId: String },
   setup() {
     const { riskColor, riskLevel, severityType, statusType, statusLabel } = useRiskColor()
@@ -230,6 +413,7 @@ export default {
       results: {},
       modules: [],
       findings: [],
+      aiSummaries: {},
       activeTab: 'modules',
       filterSeverity: '',
       filterModule: '',
@@ -241,6 +425,40 @@ export default {
       if (this.filterSeverity) list = list.filter(f => f.severity === this.filterSeverity)
       if (this.filterModule) list = list.filter(f => f.module_id === this.filterModule)
       return list
+    },
+    taskProjectId() {
+      return this.task?.project_id || null
+    },
+    coverageFindings() {
+      return this.findings
+        .filter(f => f.module_id === 'coverage_map' && f.evidence)
+        .map(f => ({
+          ...f,
+          line_coverage: f.evidence?.line_coverage || 0,
+          branch_coverage: f.evidence?.branch_coverage || 0,
+        }))
+    },
+    avgLineCoverage() {
+      const covs = this.coverageFindings
+      if (!covs.length) return 0
+      return covs.reduce((s, f) => s + (f.line_coverage || 0), 0) / covs.length
+    },
+    avgBranchCoverage() {
+      const covs = this.coverageFindings
+      if (!covs.length) return 0
+      return covs.reduce((s, f) => s + (f.branch_coverage || 0), 0) / covs.length
+    },
+    zeroCoverageCount() {
+      return this.coverageFindings.filter(f => (f.line_coverage || 0) === 0).length
+    },
+    aiEnabled() {
+      return Object.keys(this.aiSummaries).length > 0
+    },
+    aiSuccessCount() {
+      return Object.values(this.aiSummaries).filter(a => a.success).length
+    },
+    aiFailCount() {
+      return Object.values(this.aiSummaries).filter(a => !a.success && !a.skipped).length
     },
     radarOption() {
       const mods = this.modules.filter(m => m.status === 'success' && m.risk_score != null)
@@ -275,11 +493,66 @@ export default {
         const res = await fetch(url)
         const data = await res.json()
         const allFindings = []
+        const aiSummaries = {}
         for (const mod of (data.modules || [])) {
           allFindings.push(...(mod.findings || []))
+          if (mod.ai_summary) {
+            aiSummaries[mod.module_id || mod.module] = mod.ai_summary
+          }
         }
         this.findings = allFindings
+        this.aiSummaries = aiSummaries
       } catch {}
+    },
+    riskTypeTag(type) {
+      if (!type) return 'info'
+      if (type.includes('critical') || type.includes('crash') || type.includes('deadlock')) return 'danger'
+      if (type.includes('error') || type.includes('cleanup')) return 'danger'
+      if (type.includes('race') || type.includes('leak') || type.includes('overflow')) return 'warning'
+      if (type.includes('boundary')) return 'warning'
+      if (type.includes('state')) return ''
+      return ''
+    },
+    riskTypeLabel(type) {
+      const map = {
+        branch_error: '错误处理分支',
+        branch_cleanup: '资源清理分支',
+        branch_boundary: '边界条件分支',
+        branch_state: '状态/模式判断',
+        branch_normal: '正常分支',
+        boundary_miss: '边界值缺失',
+        invalid_input_gap: '无效输入风险',
+        changed_core_path: '核心路径变更',
+        error_path_incomplete: '错误路径不完整',
+        error_no_check: '缺少错误检查',
+        race_condition: '竞态条件',
+        deadlock_risk: '死锁风险',
+      }
+      return map[type] || type
+    },
+    shortenPath(path) {
+      if (!path) return '-'
+      const parts = path.split('/')
+      if (parts.length <= 3) return path
+      return '.../' + parts.slice(-2).join('/')
+    },
+    sourceLink(row) {
+      if (!this.taskProjectId || !row.file_path) return '#'
+      let link = `/projects/${this.taskProjectId}/code?path=${encodeURIComponent(row.file_path)}`
+      if (row.line_start) link += `&line=${row.line_start}`
+      return link
+    },
+    covColor(val) {
+      if (!val || val === 0) return '#D4333F'
+      if (val < 0.3) return '#D4333F'
+      if (val < 0.7) return '#E57F00'
+      return '#00AA00'
+    },
+    covBarClass(val) {
+      if (!val || val === 0) return 'cov-zero'
+      if (val < 0.3) return 'cov-low'
+      if (val < 0.7) return 'cov-medium'
+      return 'cov-high'
     },
     doExport(fmt) {
       window.open(api.exportUrl(this.taskId, fmt), '_blank')
@@ -392,4 +665,98 @@ export default {
 .gs-inline-ts-steps li { padding: 2px 0; }
 .gs-inline-ts-steps li::marker { color: var(--gs-primary); font-weight: 600; }
 .gs-inline-ts-expected { color: var(--gs-success) !important; font-weight: 500; }
+
+/* ── 风险原因 ──────────────────────── */
+.gs-risk-reason { max-width: 220px; }
+.gs-risk-reason-text {
+  font-size: 12px; color: var(--gs-text-secondary); line-height: 1.4;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+
+.gs-risk-detail-block {
+  background: rgba(234, 179, 8, 0.06); border: 1px solid rgba(234, 179, 8, 0.2);
+  border-radius: 8px; padding: 12px 16px; margin-bottom: 12px;
+}
+.gs-risk-detail-title {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 14px; font-weight: 600; color: var(--gs-text-primary); margin-bottom: 8px;
+}
+.gs-risk-detail-desc {
+  margin: 0 0 8px; font-size: 13px; color: var(--gs-text-primary); line-height: 1.6;
+}
+.gs-risk-detail-type { display: flex; align-items: center; gap: 6px; }
+.gs-risk-location-block {
+  margin-bottom: 12px; font-size: 13px; display: flex; align-items: center; flex-wrap: wrap;
+}
+
+/* ── 源码链接 ──────────────────────── */
+.gs-source-link-wrap { display: flex; flex-direction: column; gap: 2px; }
+.gs-source-link {
+  font-family: var(--gs-font-mono); font-size: 11px;
+  color: var(--gs-text-link); text-decoration: none;
+  display: inline-flex; align-items: baseline;
+}
+.gs-source-link:hover { text-decoration: underline; }
+.gs-source-file { word-break: break-all; }
+.gs-source-line { color: var(--gs-primary); font-weight: 600; }
+.gs-source-symbol {
+  font-family: var(--gs-font-mono); font-size: 11px;
+  color: var(--gs-text-muted);
+}
+
+/* ── 覆盖率 ────────────────────────── */
+.gs-coverage-section { padding: 8px 0; }
+.gs-cov-bar-wrap {
+  flex: 1; height: 8px; background: var(--gs-border-light); border-radius: 4px; overflow: hidden;
+}
+.gs-cov-bar { height: 100%; border-radius: 4px; transition: width 0.3s; }
+.gs-cov-bar.cov-zero { background: var(--gs-danger); min-width: 2px; }
+.gs-cov-bar.cov-low { background: #D4333F; }
+.gs-cov-bar.cov-medium { background: #E57F00; }
+.gs-cov-bar.cov-high { background: #00AA00; }
+.gs-file-link {
+  font-family: var(--gs-font-mono); font-size: 12px;
+  color: var(--gs-text-link); text-decoration: none;
+}
+.gs-file-link:hover { text-decoration: underline; }
+.gs-file-path { font-family: var(--gs-font-mono); font-size: 12px; }
+
+/* ── AI 增强 ──────────────────────── */
+.gs-ai-empty {
+  padding: 48px; text-align: center;
+}
+.gs-ai-empty p { margin: 8px 0; color: var(--gs-text-muted); }
+.gs-ai-results { display: flex; flex-direction: column; gap: 16px; padding: 8px 0; }
+.gs-ai-module-card {
+  border: 1px solid var(--gs-border); border-radius: 8px; padding: 16px;
+  background: var(--gs-surface);
+}
+.gs-ai-module-header {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 12px;
+}
+.gs-ai-module-name { font-weight: 600; font-size: 14px; }
+.gs-ai-section-title {
+  font-size: 12px; font-weight: 600; color: var(--gs-text-muted);
+  margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px;
+}
+.gs-ai-text {
+  background: var(--gs-bg); border-radius: 6px; padding: 12px;
+  font-size: 13px; line-height: 1.6; white-space: pre-wrap; word-break: break-word;
+  font-family: inherit; max-height: 400px; overflow-y: auto;
+}
+.gs-ai-summary-content { margin-bottom: 16px; }
+.gs-ai-suggestions { margin-bottom: 12px; }
+.gs-ai-suggestion-item {
+  background: var(--gs-bg); border-radius: 6px; padding: 10px 12px;
+  margin-bottom: 8px; font-size: 13px;
+}
+.gs-ai-error {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 12px; background: rgba(213, 0, 0, 0.05); border-radius: 6px;
+  font-size: 13px; color: #D50000;
+}
+.gs-ai-usage {
+  font-size: 11px; color: var(--gs-text-muted); margin-top: 8px;
+  padding-top: 8px; border-top: 1px solid var(--gs-border);
+}
 </style>
