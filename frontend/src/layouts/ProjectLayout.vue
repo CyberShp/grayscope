@@ -54,6 +54,7 @@ const project = ref(null)
 
 const tabs = [
   { name: 'ProjectOverview', label: '概览', icon: 'Odometer', match: 'overview' },
+  { name: 'ProjectRepos', label: '仓库', icon: 'FolderOpened', match: 'repos' },
   { name: 'ProjectTestDesign', label: '测试设计', icon: 'EditPen', match: 'test-design' },
   { name: 'ProjectIssues', label: '风险发现', icon: 'Warning', match: 'issues' },
   { name: 'ProjectMeasures', label: '度量', icon: 'TrendCharts', match: 'measures' },

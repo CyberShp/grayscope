@@ -33,8 +33,8 @@ export default {
     request('GET', `/projects/${projectId}/source?path=${encodeURIComponent(filePath)}`),
 
   // ── 仓库 ──────────────────────────────
-  listRepos: (projectId) => request('GET', `/repos?project_id=${projectId}`),
-  createRepo: (body) => request('POST', '/repos', body),
+  listRepos: (projectId) => request('GET', `/projects/${projectId}/repos`),
+  createRepo: (projectId, body) => request('POST', `/projects/${projectId}/repos`, body),
 
   // ── 分析任务 ──────────────────────────
   createTask: (body) => request('POST', '/analysis/tasks', body),

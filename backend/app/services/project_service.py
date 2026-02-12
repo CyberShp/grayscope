@@ -62,6 +62,14 @@ def add_repo(db: Session, project_id: int, req: RepoCreate) -> RepoOut:
     return RepoOut.from_orm_obj(obj)
 
 
+def list_repos(db: Session, project_id: int) -> list[RepoOut]:
+    proj = project_repo.get_by_id(db, project_id)
+    if proj is None:
+        raise NotFoundError(f"project {project_id} not found")
+    repos = repository_repo.list_by_project(db, project_id)
+    return [RepoOut.from_orm_obj(r) for r in repos]
+
+
 def get_repo(db: Session, repo_id: int) -> RepoOut:
     obj = repository_repo.get_by_id(db, repo_id)
     if obj is None:

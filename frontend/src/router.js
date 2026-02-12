@@ -79,6 +79,13 @@ const routes = [
         meta: { title: '项目概览' },
       },
       {
+        path: 'repos',
+        name: 'ProjectRepos',
+        component: () => import('./views/project/ProjectRepos.vue'),
+        props: true,
+        meta: { title: '项目仓库' },
+      },
+      {
         path: 'issues',
         name: 'ProjectIssues',
         component: () => import('./views/project/ProjectIssues.vue'),

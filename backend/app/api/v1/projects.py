@@ -43,6 +43,12 @@ def get_project(project_id: int, db: Session = Depends(get_db)) -> dict:
 # ---- repositories ----
 
 
+@router.get("/projects/{project_id}/repos")
+def list_repos(project_id: int, db: Session = Depends(get_db)) -> dict:
+    repos = project_service.list_repos(db, project_id)
+    return ok([r.model_dump() for r in repos])
+
+
 @router.post("/projects/{project_id}/repos", status_code=HTTP_201_CREATED)
 def add_repo(
     project_id: int, req: RepoCreate, db: Session = Depends(get_db)

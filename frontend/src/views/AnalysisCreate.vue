@@ -22,7 +22,7 @@
           <el-form-item label="代码仓库">
             <div style="display:flex;gap:8px;width:100%">
               <el-select v-model="form.repo_id" placeholder="请选择仓库" style="flex:1">
-                <el-option v-for="r in repos" :key="r.id ?? r.repo_id" :label="r.name || r.clone_url" :value="r.id ?? r.repo_id" />
+                <el-option v-for="r in repos" :key="r.id ?? r.repo_id" :label="r.name || r.git_url" :value="r.id ?? r.repo_id" />
               </el-select>
               <el-button type="primary" plain @click="showNewRepo = true" :disabled="!form.project_id">
                 <el-icon><Plus /></el-icon> 新建仓库
@@ -112,7 +112,7 @@
       <div v-if="result">
         <el-result icon="success" title="分析任务已创建" :sub-title="`任务ID: ${result.task_id}`">
           <template #extra>
-            <el-button type="primary" @click="$router.push(`/task/${result.task_id}`)">查看结果</el-button>
+            <el-button type="primary" @click="$router.push(`/tasks/${result.task_id}`)">查看结果</el-button>
             <el-button @click="reset">新建另一个任务</el-button>
           </template>
         </el-result>
@@ -123,13 +123,13 @@
     </el-card>
 
     <!-- 新建仓库对话框 -->
-    <el-dialog v-model="showNewRepo" title="新建仓库" width="480px" @closed="newRepo = { name: '', clone_url: '' }">
+    <el-dialog v-model="showNewRepo" title="新建仓库" width="480px" @closed="newRepo = { name: '', git_url: '' }">
       <el-form :model="newRepo" label-width="100px">
         <el-form-item label="名称">
           <el-input v-model="newRepo.name" placeholder="仓库显示名称（可选）" />
         </el-form-item>
-        <el-form-item label="克隆地址">
-          <el-input v-model="newRepo.clone_url" placeholder="https://或git@..." />
+        <el-form-item label="克隆地址" required>
+          <el-input v-model="newRepo.git_url" placeholder="https://或git@..." />
         </el-form-item>
       </el-form>
       <template #footer>
@@ -171,14 +171,14 @@ export default {
       result: null,
       error: '',
       showNewRepo: false,
-      newRepo: { name: '', clone_url: '' },
+      newRepo: { name: '', git_url: '' },
       creatingRepo: false,
     }
   },
   async mounted() {
     try {
       const data = await api.listProjects()
-      this.projects = data.projects || data || []
+      this.projects = data.items || data.projects || (Array.isArray(data) ? data : [])
     } catch {}
   },
   methods: {
@@ -188,21 +188,21 @@ export default {
       if (!this.form.project_id) return
       try {
         const data = await api.listRepos(this.form.project_id)
-        this.repos = data.repos || data || []
-      } catch {}
+        this.repos = Array.isArray(data) ? data : (data.repos || data.items || [])
+      } catch {
+      }
     },
     async createRepo() {
-      if (!this.newRepo.clone_url) {
+      if (!this.newRepo.git_url) {
         this.$message.warning('请填写克隆地址')
         return
       }
       this.creatingRepo = true
       this.error = ''
       try {
-        await api.createRepo({
-          project_id: this.form.project_id,
-          name: this.newRepo.name || this.newRepo.clone_url,
-          clone_url: this.newRepo.clone_url,
+        await api.createRepo(this.form.project_id, {
+          name: this.newRepo.name || this.newRepo.git_url,
+          git_url: this.newRepo.git_url,
         })
         this.$message.success('仓库创建成功')
         this.showNewRepo = false

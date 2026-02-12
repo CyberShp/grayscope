@@ -12,12 +12,12 @@
           <el-form :model="form" label-width="100px">
             <el-form-item label="项目">
               <el-select v-model="form.project_id" placeholder="选择项目" style="width:100%" @change="onProjectChange">
-                <el-option v-for="p in projects" :key="p.id" :label="p.name" :value="p.id" />
-              </el-select>
+              <el-option v-for="p in projects" :key="p.id ?? p.project_id" :label="p.name" :value="p.id ?? p.project_id" />
+            </el-select>
             </el-form-item>
             <el-form-item label="代码仓库">
               <el-select v-model="form.repo_id" placeholder="选择仓库" style="width:100%">
-                <el-option v-for="r in repos" :key="r.id" :label="r.name || r.clone_url" :value="r.id" />
+                <el-option v-for="r in repos" :key="r.id ?? r.repo_id" :label="r.name || r.git_url" :value="r.id ?? r.repo_id" />
               </el-select>
             </el-form-item>
             <el-divider />
@@ -123,7 +123,7 @@ export default {
   async mounted() {
     try {
       const data = await api.listProjects()
-      this.projects = data.projects || data || []
+      this.projects = data.items || data.projects || (Array.isArray(data) ? data : [])
     } catch {}
   },
   methods: {
@@ -133,7 +133,7 @@ export default {
       if (!this.form.project_id) return
       try {
         const data = await api.listRepos(this.form.project_id)
-        this.repos = data.repos || data || []
+        this.repos = Array.isArray(data) ? data : (data.repos || data.items || [])
       } catch {}
     },
     async submit() {
