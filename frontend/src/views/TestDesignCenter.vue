@@ -6,6 +6,7 @@
         <h1 class="gs-page-title">测试设计中心</h1>
         <p class="gs-page-desc">跨项目查看所有灰盒分析生成的测试用例建议——从风险发现到测试设计的桥梁。</p>
       </div>
+      <el-button size="small" @click="downloadTemplate">下载灰盒用例模板</el-button>
     </div>
 
     <!-- 筛选栏 -->
@@ -37,8 +38,7 @@
         v-for="tc in testCases"
         :key="tc.test_case_id"
         class="gs-testcase-card"
-        :class="{ expanded: expandedId === tc.test_case_id }"
-        @click="toggleExpand(tc.test_case_id)"
+        @click="openDetail(tc)"
       >
         <div class="gs-tc-header">
           <div class="gs-tc-header-left">
@@ -56,7 +56,7 @@
               <span class="gs-risk-dot" :style="{ background: riskColor(tc.risk_score) }"></span>
               {{ (tc.risk_score * 100).toFixed(0) }}%
             </span>
-            <el-icon class="gs-tc-expand-icon" :class="{ rotated: expandedId === tc.test_case_id }"><ArrowDown /></el-icon>
+            <el-icon class="gs-tc-open-icon"><ArrowRight /></el-icon>
           </div>
         </div>
 
@@ -69,32 +69,6 @@
           <code>{{ tc.target_file }}</code>
           <span v-if="tc.target_function">→ <code>{{ tc.target_function }}()</code></span>
           <span v-if="tc.line_start" class="gs-tc-lines">L{{ tc.line_start }}–{{ tc.line_end }}</span>
-        </div>
-
-        <!-- 展开详情 -->
-        <div v-if="expandedId === tc.test_case_id" class="gs-tc-detail" @click.stop>
-          <div class="gs-tc-section">
-            <div class="gs-tc-section-title"><el-icon><List /></el-icon> 前置条件</div>
-            <ul class="gs-tc-preconditions">
-              <li v-for="(p, i) in tc.preconditions" :key="i">{{ p }}</li>
-            </ul>
-          </div>
-          <div class="gs-tc-section">
-            <div class="gs-tc-section-title"><el-icon><Guide /></el-icon> 测试步骤</div>
-            <ol class="gs-tc-steps">
-              <li v-for="(s, i) in tc.test_steps" :key="i">{{ stripNumber(s) }}</li>
-            </ol>
-          </div>
-          <div class="gs-tc-section">
-            <div class="gs-tc-section-title"><el-icon><CircleCheck /></el-icon> 预期结果</div>
-            <div class="gs-tc-expected">{{ tc.expected_result }}</div>
-          </div>
-          <div v-if="tc.evidence && Object.keys(tc.evidence).length" class="gs-tc-section">
-            <div class="gs-tc-section-title"><el-icon><Document /></el-icon> 分析证据</div>
-            <div class="gs-tc-evidence">
-              <EvidenceRenderer :module-id="tc.module_id" :risk-type="tc.category" :evidence="tc.evidence" :finding="tc" />
-            </div>
-          </div>
         </div>
       </div>
     </div>
@@ -113,24 +87,40 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted, computed } from 'vue'
-import { ArrowDown, Aim, List, Guide, CircleCheck, Document, RefreshRight } from '@element-plus/icons-vue'
+import { ref, reactive, onMounted, computed, toRaw } from 'vue'
+import { useRouter } from 'vue-router'
+import { ArrowRight, Aim, RefreshRight } from '@element-plus/icons-vue'
 import api from '../api.js'
 import { useAppStore } from '../stores/app.js'
 import { useModuleNames } from '../composables/useModuleNames.js'
 import { useRiskColor } from '../composables/useRiskColor.js'
-import EvidenceRenderer from '../components/EvidenceRenderer.vue'
 
 const appStore = useAppStore()
 const { moduleList } = useModuleNames()
 const { riskColor } = useRiskColor()
+
+async function downloadTemplate() {
+  try {
+    const data = await api.getTestCaseTemplate()
+    const md = data?.markdown || ''
+    const blob = new Blob([md], { type: 'text/markdown' })
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = 'grayscope_灰盒测试用例模板.md'
+    a.click()
+    URL.revokeObjectURL(a.href)
+  } catch (e) {
+    console.error(e)
+  }
+}
+
+const router = useRouter()
 
 const loading = ref(false)
 const testCases = ref([])
 const total = ref(0)
 const page = ref(1)
 const pageSize = 30
-const expandedId = ref(null)
 const filters = reactive({ project_id: '', priority: '', module_id: '' })
 
 const projects = computed(() => appStore.projects || [])
@@ -145,12 +135,13 @@ function priorityClass(p) {
   return `priority-${p.split('-')[0].toLowerCase()}`
 }
 
-function stripNumber(s) {
-  return s.replace(/^\d+\.\s*/, '')
-}
-
-function toggleExpand(id) {
-  expandedId.value = expandedId.value === id ? null : id
+function openDetail(tc) {
+  const plainTc = JSON.parse(JSON.stringify(toRaw(tc)))
+  router.push({
+    name: 'TestCaseDetail',
+    params: { testCaseId: tc.test_case_id },
+    state: { tc: plainTc },
+  })
 }
 
 function resetFilters() {
@@ -198,8 +189,7 @@ onMounted(() => {
   border-radius: var(--gs-radius-md); padding: 16px 20px;
   cursor: pointer; transition: all var(--gs-transition);
 }
-.gs-testcase-card:hover { border-color: var(--gs-primary); box-shadow: var(--gs-shadow-sm); }
-.gs-testcase-card.expanded { border-color: var(--gs-primary); box-shadow: var(--gs-shadow-md); }
+.gs-testcase-card:hover { border-color: var(--gs-primary); box-shadow: var(--gs-shadow-sm); transform: translateY(-1px); }
 
 .gs-tc-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
 .gs-tc-header-left { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
@@ -227,8 +217,8 @@ onMounted(() => {
 
 .gs-tc-risk { display: flex; align-items: center; gap: 4px; font-size: 12px; color: var(--gs-text-secondary); font-family: var(--gs-font-mono); }
 .gs-risk-dot { width: 8px; height: 8px; border-radius: 50%; }
-.gs-tc-expand-icon { transition: transform 0.2s; color: var(--gs-text-muted); }
-.gs-tc-expand-icon.rotated { transform: rotate(180deg); }
+.gs-tc-open-icon { color: var(--gs-text-muted); transition: transform 0.2s; }
+.gs-testcase-card:hover .gs-tc-open-icon { color: var(--gs-primary); transform: translateX(2px); }
 
 .gs-tc-title { font-size: 15px; font-weight: 600; color: var(--gs-text-primary); margin-bottom: 6px; line-height: 1.4; }
 .gs-tc-objective { display: flex; align-items: flex-start; gap: 6px; font-size: 13px; color: var(--gs-text-secondary); line-height: 1.5; margin-bottom: 6px; }
@@ -238,14 +228,6 @@ onMounted(() => {
 .gs-tc-location code { background: rgba(75, 159, 213, 0.08); padding: 1px 5px; border-radius: 3px; font-size: 11px; }
 .gs-tc-lines { margin-left: 6px; }
 
-.gs-tc-detail { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--gs-border); cursor: default; }
-.gs-tc-section { margin-bottom: 16px; }
-.gs-tc-section-title { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; color: var(--gs-text-primary); margin-bottom: 8px; }
-.gs-tc-section-title .el-icon { color: var(--gs-primary); }
-.gs-tc-preconditions, .gs-tc-steps { margin: 0; padding-left: 20px; font-size: 13px; color: var(--gs-text-secondary); line-height: 1.8; }
-.gs-tc-steps li::marker { color: var(--gs-primary); font-weight: 600; }
-.gs-tc-expected { font-size: 13px; color: var(--gs-success); font-weight: 500; padding: 10px 14px; background: rgba(0, 170, 0, 0.06); border-radius: var(--gs-radius-sm); border-left: 3px solid var(--gs-success); }
-.gs-tc-evidence { background: var(--gs-bg); border-radius: var(--gs-radius-sm); padding: 12px; }
 .gs-pagination { display: flex; justify-content: center; margin-top: 20px; padding-bottom: 20px; }
 .gs-empty { padding: 60px 0; text-align: center; }
 </style>

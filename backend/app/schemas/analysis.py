@@ -29,14 +29,16 @@ class AnalysisAI(BaseModel):
 
 
 class AnalysisOptions(BaseModel):
-    callgraph_depth: int = Field(default=2, ge=1, le=5)
+    callgraph_depth: int = Field(default=12, ge=1, le=20)
     max_files: int = Field(default=500, ge=1)
     risk_threshold: float = Field(default=0.6, ge=0.0, le=1.0)
+    enable_data_flow: bool = True
+    enable_cross_module_ai: bool = True
 
 
 SUPPORTED_MODULES = {
     "branch_path", "boundary_value", "error_path", "call_graph",
-    "concurrency", "diff_impact", "coverage_map",
+    "data_flow", "concurrency", "diff_impact", "coverage_map",
     "postmortem", "knowledge_pattern",
 }
 SUPPORTED_TASK_TYPES = {"full", "file", "function", "diff", "postmortem"}

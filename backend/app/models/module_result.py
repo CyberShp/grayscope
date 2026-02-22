@@ -47,6 +47,6 @@ class AnalysisModuleResult(TimestampMixin, Base):
     VALID_STATUSES = {"success", "failed", "skipped", "cancelled", "running", "pending"}
     VALID_MODULES = {
         "branch_path", "boundary_value", "error_path", "call_graph",
-        "concurrency", "diff_impact", "coverage_map",
+        "data_flow", "concurrency", "diff_impact", "coverage_map",
         "postmortem", "knowledge_pattern",
     }

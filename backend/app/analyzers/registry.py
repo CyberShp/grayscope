@@ -30,7 +30,12 @@ MODULE_REGISTRY: dict[str, dict[str, Any]] = {
     },
     "call_graph": {
         "display_name": "调用图构建",
-        "description": "构建函数级有向调用图，识别高扇出/扇入函数，分析函数间依赖关系",
+        "description": "构建函数级有向调用图（含参数映射），识别高扇出/扇入函数，分析函数间依赖关系",
+        "category": "静态分析",
+    },
+    "data_flow": {
+        "display_name": "数据流分析",
+        "description": "跨函数参数传播链追踪，值域变换检测，外部输入到敏感操作的污点分析",
         "category": "静态分析",
     },
     "concurrency": {
@@ -63,7 +68,7 @@ MODULE_REGISTRY: dict[str, dict[str, Any]] = {
 # ── 分析任务支持的模块集合（不含事后分析模块） ──────────────────────────
 ANALYSIS_MODULES = [
     "branch_path", "boundary_value", "error_path", "call_graph",
-    "concurrency", "diff_impact", "coverage_map",
+    "data_flow", "concurrency", "diff_impact", "coverage_map",
 ]
 
 # ── 事后分析模块 ──────────────────────────────────────────────────────

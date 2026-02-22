@@ -25,6 +25,18 @@
             >{{ c }}</span>
           </div>
         </div>
+        <!-- 传播链上下文（增强） -->
+        <div v-if="evidence.propagation_chain?.length > 1" class="gs-ev-boundary-chain">
+          <span class="gs-ev-label">调用链传播</span>
+          <div class="gs-ev-chain">
+            <span v-for="(step, i) in evidence.propagation_chain" :key="i" class="gs-ev-chain-item">
+              <code :class="{ 'gs-ev-changed': i === 0, 'gs-ev-impacted': i === evidence.propagation_chain.length - 1 }">{{ step.function }}({{ step.param }})</code>
+              <span v-if="step.transform && step.transform !== 'none'" style="font-size:10px;color:#E57F00;">{{ step.transform }}</span>
+              <span v-if="i < evidence.propagation_chain.length - 1" class="gs-ev-chain-arrow">→</span>
+            </span>
+          </div>
+          <el-tag v-if="evidence.is_external_input" type="danger" size="small" style="margin-top:6px;">入口来自外部输入</el-tag>
+        </div>
       </div>
     </template>
 
@@ -46,6 +58,27 @@
           <span class="gs-ev-label">错误传播</span>
           <el-tag :type="evidence.propagation === 'swallowed' ? 'danger' : 'success'" size="small">
             {{ evidence.propagation === 'swallowed' ? '被静默吞没' : evidence.propagation }}
+          </el-tag>
+        </div>
+        <!-- 跨函数资源泄漏 -->
+        <div v-if="evidence.caller_function && evidence.callee_function" class="gs-ev-row">
+          <span class="gs-ev-label">跨函数链</span>
+          <div class="gs-ev-chain">
+            <span class="gs-ev-chain-item"><code class="gs-ev-changed">{{ evidence.caller_function }}()</code></span>
+            <span class="gs-ev-chain-arrow">→ 调用 →</span>
+            <span class="gs-ev-chain-item"><code class="gs-ev-impacted">{{ evidence.callee_function }}()</code></span>
+          </div>
+        </div>
+        <div v-if="evidence.caller_resources?.length" class="gs-ev-row">
+          <span class="gs-ev-label">已分配资源</span>
+          <div class="gs-ev-chip-list">
+            <code v-for="r in evidence.caller_resources" :key="r" class="gs-ev-func-chip" style="background:rgba(213,0,0,0.08);color:#D50000;">{{ r }}</code>
+          </div>
+        </div>
+        <div v-if="evidence.return_value_checked !== undefined" class="gs-ev-row">
+          <span class="gs-ev-label">返回值检查</span>
+          <el-tag :type="evidence.return_value_checked ? 'success' : 'danger'" size="small">
+            {{ evidence.return_value_checked ? '已检查' : '未检查' }}
           </el-tag>
         </div>
         <div v-if="evidence.cleanup_resources_expected?.length" class="gs-ev-cleanup-table">
@@ -124,6 +157,43 @@
             </span>
           </div>
         </div>
+        <!-- 跨函数竞态信息 -->
+        <div v-if="evidence.other_accessors?.length" class="gs-ev-row">
+          <span class="gs-ev-label">其他访问者</span>
+          <div class="gs-ev-chip-list">
+            <code v-for="fn in evidence.other_accessors" :key="fn" class="gs-ev-func-chip gs-ev-impacted">{{ fn }}()</code>
+          </div>
+        </div>
+        <div v-if="evidence.cross_function_chain" class="gs-ev-row">
+          <span class="gs-ev-label">跨函数调用链</span>
+          <div class="gs-ev-chain gs-ev-chain-danger">
+            <span v-for="(fn, i) in (Array.isArray(evidence.cross_function_chain) ? evidence.cross_function_chain : [evidence.cross_function_chain])" :key="i" class="gs-ev-chain-item">
+              <code>{{ fn }}</code>
+              <span v-if="i < (Array.isArray(evidence.cross_function_chain) ? evidence.cross_function_chain.length : 1) - 1" class="gs-ev-chain-arrow">→</span>
+            </span>
+          </div>
+        </div>
+        <!-- ABBA 死锁 chain_a / chain_b -->
+        <div v-if="evidence.chain_a" class="gs-ev-row">
+          <span class="gs-ev-label">路径 A 锁顺序</span>
+          <div class="gs-ev-chain">
+            <span v-for="(l, i) in (evidence.chain_a.locks || [])" :key="'a'+i" class="gs-ev-chain-item">
+              <code>{{ l }}</code>
+              <span v-if="i < (evidence.chain_a.locks || []).length - 1" class="gs-ev-chain-arrow">→</span>
+            </span>
+            <span v-if="evidence.chain_a.path" style="font-size:11px;color:var(--gs-text-muted);margin-left:8px;">({{ evidence.chain_a.path }})</span>
+          </div>
+        </div>
+        <div v-if="evidence.chain_b" class="gs-ev-row">
+          <span class="gs-ev-label">路径 B 锁顺序</span>
+          <div class="gs-ev-chain gs-ev-chain-danger">
+            <span v-for="(l, i) in (evidence.chain_b.locks || [])" :key="'b'+i" class="gs-ev-chain-item">
+              <code>{{ l }}</code>
+              <span v-if="i < (evidence.chain_b.locks || []).length - 1" class="gs-ev-chain-arrow">→</span>
+            </span>
+            <span v-if="evidence.chain_b.path" style="font-size:11px;color:var(--gs-text-muted);margin-left:8px;">({{ evidence.chain_b.path }})</span>
+          </div>
+        </div>
         <div v-if="evidence.operations?.length" class="gs-ev-row">
           <span class="gs-ev-label">非原子操作序列</span>
           <div class="gs-ev-chain gs-ev-chain-warn">
@@ -134,6 +204,60 @@
           </div>
           <el-tag v-if="evidence.gap_between" type="warning" size="small" style="margin-top:4px">存在原子性缺口</el-tag>
         </div>
+      </div>
+    </template>
+
+    <!-- data_flow 模块: 参数传播链可视化 -->
+    <template v-else-if="moduleId === 'data_flow'">
+      <div class="gs-ev-dataflow">
+        <div v-if="evidence.entry_function" class="gs-ev-row">
+          <span class="gs-ev-label">入口函数</span>
+          <code class="gs-ev-code gs-ev-highlight">{{ evidence.entry_function }}({{ evidence.entry_param || '' }})</code>
+          <el-tag v-if="evidence.is_external_input" type="danger" size="small" style="margin-left:6px;">外部输入</el-tag>
+        </div>
+        <div v-if="evidence.chain_depth" class="gs-ev-row">
+          <span class="gs-ev-label">传播深度</span>
+          <span class="gs-ev-big-num" :class="{ danger: evidence.chain_depth >= 5 }">{{ evidence.chain_depth }} 层</span>
+        </div>
+        <div v-if="evidence.propagation_chain?.length" class="gs-ev-dataflow-chain">
+          <span class="gs-ev-label">传播路径</span>
+          <div class="gs-ev-flow-pipeline">
+            <div v-for="(step, i) in evidence.propagation_chain" :key="i" class="gs-ev-flow-step"
+                 :class="{ 'gs-ev-flow-entry': i === 0, 'gs-ev-flow-sink': i === evidence.propagation_chain.length - 1 }">
+              <div class="gs-ev-flow-step-header">
+                <span class="gs-ev-flow-step-idx">{{ i + 1 }}</span>
+                <code class="gs-ev-func-chip">{{ step.function }}()</code>
+              </div>
+              <div class="gs-ev-flow-step-detail">
+                <span class="gs-ev-flow-param">参数: <code>{{ step.param }}</code></span>
+                <span v-if="step.transform && step.transform !== 'none'" class="gs-ev-flow-transform">
+                  变换: <code class="gs-ev-flow-transform-code">{{ step.transform }}</code>
+                  <span v-if="step.transform_expr" class="gs-ev-flow-transform-expr">{{ step.transform_expr }}</span>
+                </span>
+              </div>
+              <div v-if="i < evidence.propagation_chain.length - 1" class="gs-ev-flow-connector">
+                <span class="gs-ev-flow-arrow">▼</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div v-if="evidence.sensitive_operations?.length" class="gs-ev-row">
+          <span class="gs-ev-label">敏感操作</span>
+          <div class="gs-ev-chip-list">
+            <code v-for="op in evidence.sensitive_operations" :key="op" class="gs-ev-func-chip" style="color:#D50000;background:rgba(213,0,0,0.08);">{{ op }}</code>
+          </div>
+        </div>
+        <div v-if="evidence.attack_scenario" class="gs-ev-row" style="flex-direction:column;gap:4px;">
+          <span class="gs-ev-label">攻击场景</span>
+          <p style="margin:0;font-size:12px;color:var(--gs-text-secondary);line-height:1.5;">{{ evidence.attack_scenario }}</p>
+        </div>
+        <!-- 交互式数据流图 -->
+        <DataFlowGraph
+          v-if="evidence.propagation_chain?.length > 1"
+          :chain="evidence.propagation_chain"
+          :is-external="!!evidence.is_external_input"
+          style="margin-top: 8px;"
+        />
       </div>
     </template>
 
@@ -163,6 +287,21 @@
             </span>
           </div>
         </div>
+        <div v-if="evidence.caller_chains?.length" class="gs-ev-row" style="flex-direction:column;gap:4px;">
+          <span class="gs-ev-label">深层调用链</span>
+          <div v-for="(chain, ci) in evidence.caller_chains.slice(0, 5)" :key="ci" class="gs-ev-chain" style="margin-bottom:4px;">
+            <span v-for="(fn, i) in chain" :key="i" class="gs-ev-chain-item">
+              <code>{{ fn }}()</code>
+              <span v-if="i < chain.length - 1" class="gs-ev-chain-arrow">→</span>
+            </span>
+          </div>
+        </div>
+        <div v-if="evidence.params?.length" class="gs-ev-row">
+          <span class="gs-ev-label">函数参数</span>
+          <div class="gs-ev-chip-list">
+            <code v-for="p in evidence.params" :key="p" class="gs-ev-func-chip">{{ p }}</code>
+          </div>
+        </div>
         <!-- 交互式调用图 -->
         <CallGraph :evidence="evidence" :finding="finding" module-id="call_graph" style="margin-top: 8px;" />
       </div>
@@ -177,15 +316,37 @@
             <code v-for="s in evidence.changed_symbols" :key="s" class="gs-ev-func-chip gs-ev-changed">{{ s }}()</code>
           </div>
         </div>
+        <div v-if="evidence.impacted_callers?.length" class="gs-ev-row">
+          <span class="gs-ev-label">上游调用者 ({{ evidence.impacted_callers.length }})</span>
+          <div class="gs-ev-chip-list">
+            <code v-for="s in evidence.impacted_callers.slice(0, 8)" :key="s" class="gs-ev-func-chip gs-ev-impacted">{{ typeof s === 'string' ? s : s.name }}()</code>
+            <span v-if="evidence.impacted_callers.length > 8" class="gs-ev-chip-more">还有 {{ evidence.impacted_callers.length - 8 }} 个</span>
+          </div>
+        </div>
+        <div v-if="evidence.impacted_callees?.length" class="gs-ev-row">
+          <span class="gs-ev-label">下游被调用 ({{ evidence.impacted_callees.length }})</span>
+          <div class="gs-ev-chip-list">
+            <code v-for="s in evidence.impacted_callees.slice(0, 8)" :key="s" class="gs-ev-func-chip gs-ev-impacted">{{ typeof s === 'string' ? s : s.name }}()</code>
+            <span v-if="evidence.impacted_callees.length > 8" class="gs-ev-chip-more">还有 {{ evidence.impacted_callees.length - 8 }} 个</span>
+          </div>
+        </div>
         <div v-if="evidence.impacted_symbols?.length" class="gs-ev-row">
           <span class="gs-ev-label">受影响函数</span>
           <div class="gs-ev-chip-list">
-            <code v-for="s in evidence.impacted_symbols" :key="s" class="gs-ev-func-chip gs-ev-impacted">{{ s }}()</code>
+            <code v-for="s in evidence.impacted_symbols" :key="s" class="gs-ev-func-chip gs-ev-impacted">{{ typeof s === 'string' ? s : s.name }}()</code>
           </div>
         </div>
         <div v-if="evidence.depth" class="gs-ev-row">
           <span class="gs-ev-label">影响传播深度</span>
           <span class="gs-ev-big-num">{{ evidence.depth }} 层</span>
+        </div>
+        <div v-if="evidence.affected_data_flow_chains" class="gs-ev-row">
+          <span class="gs-ev-label">影响数据流链</span>
+          <el-tag type="danger" size="small">{{ typeof evidence.affected_data_flow_chains === 'number' ? evidence.affected_data_flow_chains : Array.isArray(evidence.affected_data_flow_chains) ? evidence.affected_data_flow_chains.length : 1 }} 条传播链受影响</el-tag>
+        </div>
+        <div v-if="evidence.direction" class="gs-ev-row">
+          <span class="gs-ev-label">传播方向</span>
+          <el-tag size="small">{{ evidence.direction === 'upstream' ? '上游（调用者）' : evidence.direction === 'downstream' ? '下游（被调用）' : evidence.direction }}</el-tag>
         </div>
         <!-- 变更影响图 -->
         <CallGraph :evidence="evidence" :finding="finding" module-id="diff_impact" style="margin-top: 8px;" />
@@ -250,6 +411,7 @@
 <script setup>
 import CfgGraph from './CfgGraph.vue'
 import CallGraph from './CallGraph.vue'
+import DataFlowGraph from './DataFlowGraph.vue'
 
 const props = defineProps({
   moduleId: { type: String, default: '' },
@@ -287,11 +449,13 @@ function covClass(val) {
 function pathTypeTag(pt) {
   if (pt === 'error') return 'danger'
   if (pt === 'cleanup') return 'warning'
+  if (pt === 'boundary') return 'warning'
+  if (pt === 'state') return 'info'
   return 'info'
 }
 
 function pathTypeLabel(pt) {
-  const map = { error: '错误路径', cleanup: '清理路径', normal: '正常路径' }
+  const map = { error: '错误路径', cleanup: '清理路径', boundary: '边界条件路径', state: '状态判断路径', normal: '正常路径' }
   return map[pt] || pt
 }
 </script>
@@ -299,6 +463,9 @@ function pathTypeLabel(pt) {
 <style scoped>
 .gs-evidence-renderer {
   font-size: 13px;
+  overflow: hidden;
+  word-break: break-word;
+  overflow-wrap: break-word;
 }
 
 /* ── 通用行 ─────────────────────────── */
@@ -307,6 +474,8 @@ function pathTypeLabel(pt) {
   align-items: flex-start;
   gap: 10px;
   margin-bottom: 10px;
+  min-width: 0;
+  max-width: 100%;
 }
 .gs-ev-label {
   display: inline-block;
@@ -324,6 +493,8 @@ function pathTypeLabel(pt) {
   padding: 2px 8px;
   border-radius: 4px;
   color: var(--gs-text-primary);
+  word-break: break-all;
+  overflow-wrap: break-word;
 }
 .gs-ev-highlight {
   background: rgba(229, 127, 0, 0.1);
@@ -417,8 +588,10 @@ function pathTypeLabel(pt) {
   flex-wrap: wrap;
   align-items: center;
   gap: 4px;
+  min-width: 0;
+  flex: 1;
 }
-.gs-ev-chain-item { display: flex; align-items: center; gap: 4px; }
+.gs-ev-chain-item { display: flex; align-items: center; gap: 4px; min-width: 0; word-break: break-all; }
 .gs-ev-chain-arrow { color: var(--gs-text-muted); font-size: 14px; }
 .gs-ev-chain-danger .gs-ev-chain-arrow { color: var(--gs-danger); }
 .gs-ev-chain-danger code { color: var(--gs-danger); }
@@ -426,7 +599,7 @@ function pathTypeLabel(pt) {
 .gs-ev-gap-arrow { color: var(--gs-danger) !important; font-weight: bold; }
 
 /* ── 函数标签 ───────────────────────── */
-.gs-ev-chip-list { display: flex; flex-wrap: wrap; gap: 4px; }
+.gs-ev-chip-list { display: flex; flex-wrap: wrap; gap: 4px; min-width: 0; flex: 1; }
 .gs-ev-func-chip {
   display: inline-block;
   padding: 2px 8px;
@@ -435,6 +608,18 @@ function pathTypeLabel(pt) {
   font-family: var(--gs-font-mono);
   font-size: 12px;
   color: var(--gs-text-primary);
+  word-break: break-all;
+  overflow-wrap: break-word;
+  max-width: 100%;
+}
+.gs-ev-chip-more {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  font-size: 11px;
+  color: var(--gs-text-muted);
+  background: rgba(0,0,0,0.04);
+  border-radius: 4px;
 }
 .gs-ev-changed {
   background: rgba(213, 0, 0, 0.1);
@@ -489,6 +674,48 @@ function pathTypeLabel(pt) {
   font-size: 12px;
   font-weight: 600;
 }
+
+/* ── 数据流传播 ───────────────────── */
+.gs-ev-dataflow-chain { margin-top: 8px; }
+.gs-ev-flow-pipeline {
+  display: flex; flex-direction: column; gap: 0;
+  margin-top: 8px; padding-left: 4px;
+}
+.gs-ev-flow-step {
+  position: relative; padding: 8px 12px;
+  background: var(--gs-surface); border: 1px solid var(--gs-border); border-radius: 6px;
+}
+.gs-ev-flow-entry { border-left: 3px solid #00AA00; }
+.gs-ev-flow-sink { border-left: 3px solid #D50000; }
+.gs-ev-flow-step-header {
+  display: flex; align-items: center; gap: 6px;
+}
+.gs-ev-flow-step-idx {
+  min-width: 20px; height: 20px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 50%; font-size: 10px; font-weight: 700;
+  background: rgba(75, 159, 213, 0.12); color: var(--gs-primary);
+}
+.gs-ev-flow-step-detail {
+  display: flex; gap: 12px; margin-top: 4px; font-size: 11px;
+}
+.gs-ev-flow-param { color: var(--gs-text-secondary); }
+.gs-ev-flow-param code { font-family: var(--gs-font-mono); font-size: 11px; }
+.gs-ev-flow-transform { color: #E57F00; }
+.gs-ev-flow-transform-code {
+  background: rgba(229, 127, 0, 0.1); padding: 1px 4px; border-radius: 3px;
+  font-family: var(--gs-font-mono); font-size: 10px; color: #E57F00;
+}
+.gs-ev-flow-transform-expr {
+  font-size: 10px; color: var(--gs-text-muted);
+}
+.gs-ev-flow-connector {
+  text-align: center; padding: 2px 0; color: var(--gs-text-muted); font-size: 12px;
+}
+.gs-ev-flow-arrow { color: var(--gs-primary); }
+
+/* ── 边界值传播链 ───────────────────── */
+.gs-ev-boundary-chain { margin-top: 8px; }
 
 /* ── JSON fallback ──────────────────── */
 .gs-ev-json {

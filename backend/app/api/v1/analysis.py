@@ -40,7 +40,7 @@ def get_results(task_id: str, db: Session = Depends(get_db)) -> dict:
 @router.get("/analysis/tasks/{task_id}/export")
 def export_task(
     task_id: str,
-    fmt: str = Query("json", pattern="^(json|csv|findings)$"),
+    fmt: str = Query("json", pattern="^(json|csv|markdown|findings)$"),
     db: Session = Depends(get_db),
 ):
     """导出分析结果为结构化测试用例。
@@ -48,6 +48,7 @@ def export_task(
     格式选项：
     - json：结构化测试用例建议（JSON）
     - csv：测试用例表（CSV，可导入测试管理工具）
+    - markdown：灰盒测试用例清单（含步骤、预期、如何执行）
     - findings：原始发现及 AI 增强数据（JSON）
     """
     if fmt == "csv":
@@ -57,6 +58,15 @@ def export_task(
             media_type="text/csv",
             headers={
                 "Content-Disposition": f'attachment; filename="grayscope_{task_id}.csv"'
+            },
+        )
+    elif fmt == "markdown":
+        content = export_service.export_markdown(db, task_id)
+        return PlainTextResponse(
+            content,
+            media_type="text/markdown",
+            headers={
+                "Content-Disposition": f'attachment; filename="grayscope_{task_id}_testcases.md"'
             },
         )
     elif fmt == "findings":

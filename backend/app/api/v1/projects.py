@@ -5,7 +5,7 @@ from starlette.status import HTTP_201_CREATED
 from app.core.database import get_db
 from app.core.response import ok
 from app.schemas.project import ProjectCreate
-from app.schemas.repository import RepoCreate
+from app.schemas.repository import RepoCreate, RepoUpdate
 from app.services import project_service
 
 router = APIRouter()
@@ -54,4 +54,15 @@ def add_repo(
     project_id: int, req: RepoCreate, db: Session = Depends(get_db)
 ) -> dict:
     out = project_service.add_repo(db, project_id, req)
+    return ok(out.model_dump())
+
+
+@router.patch("/projects/{project_id}/repos/{repo_id}")
+def update_repo(
+    project_id: int,
+    repo_id: int,
+    req: RepoUpdate,
+    db: Session = Depends(get_db),
+) -> dict:
+    out = project_service.update_repo(db, repo_id, req, project_id=project_id)
     return ok(out.model_dump())

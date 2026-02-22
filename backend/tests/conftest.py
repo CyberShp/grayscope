@@ -10,7 +10,7 @@ from app.main import app
 from app.core.database import get_db
 from app.models import Base
 
-# ── In-memory SQLite for test isolation ──────────────────────────
+# ── File-based SQLite for test isolation ─────────────────────────
 TEST_DATABASE_URL = "sqlite:///./test_grayscope.db"
 
 engine = create_engine(TEST_DATABASE_URL, connect_args={"check_same_thread": False})

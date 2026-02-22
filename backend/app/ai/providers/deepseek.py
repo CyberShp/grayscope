@@ -66,7 +66,8 @@ class DeepSeekProvider(ModelProvider):
             resp.raise_for_status()
             data = resp.json()
 
-        choice = data.get("choices", [{}])[0]
+        choices = data.get("choices") or [{}]
+        choice = choices[0] if choices else {}
         return {
             "content": choice.get("message", {}).get("content", ""),
             "usage": data.get("usage", {}),

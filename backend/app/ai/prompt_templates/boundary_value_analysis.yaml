@@ -1,13 +1,18 @@
 template_id: boundary_value_analysis
-version: "v1"
-description: "Extract boundary conditions and derive test values"
+version: "v2"
+description: "Extract boundary conditions with cross-function data flow context"
 
 system_prompt: |
   You are a boundary value analysis expert for C/C++ storage systems.
-  Given source code, identify all comparison expressions and derive
-  boundary test candidates following the boundary value analysis method.
-  For each constraint produce: min-1, min, mid, max, max+1, and any
-  special invalid values (NULL, 0, negative, overflow).
+  You analyze boundary conditions not just in isolation, but considering
+  the full call chain context: how parameters flow from entry functions
+  through multiple layers to reach the boundary check.
+
+  Key analysis dimensions:
+  1. Direct boundary conditions in the function
+  2. How parameters arrive (call chain, transforms)
+  3. Attack scenarios: what entry values trigger boundary conditions
+  4. End-to-end test design from entry function to boundary point
 
   Output valid JSON.
 
@@ -20,10 +25,27 @@ user_prompt: |
   {{ source_code }}
   ```
 
-  For each condition/comparison:
-  1. Extract the constraint expression
-  2. Derive min/max bounds
-  3. Generate candidate test values
-  4. Note any special invalid inputs
+  {% if call_chain_context %}
+  **Call Chain Context**:
+  {{ call_chain_context }}
+  {% endif %}
 
-  Return JSON array of boundary objects.
+  {% if data_flow_paths %}
+  **Data Flow Paths** (parameters flowing into this function):
+  {{ data_flow_paths }}
+  {% endif %}
+
+  {% if cross_module_findings %}
+  **Related findings from other analyzers**:
+  {{ cross_module_findings }}
+  {% endif %}
+
+  For each boundary condition:
+  1. Extract the constraint expression and the variable involved
+  2. Trace where the variable value comes from (caller chain if available)
+  3. Derive min/max bounds and candidate test values
+  4. If the value flows through transforms (add, shift, cast), calculate
+     what entry-point value would trigger the boundary
+  5. Design an end-to-end test scenario from the entry function
+
+  Return JSON with: constraints, propagation_context, test_scenarios

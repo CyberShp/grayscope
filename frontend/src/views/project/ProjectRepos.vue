@@ -41,8 +41,19 @@
             {{ row.last_sync_at ? formatDate(row.last_sync_at) : '-' }}
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="200" align="center" fixed="right">
+        <el-table-column label="鉴权" width="90" align="center">
           <template #default="{ row }">
+            <el-tag v-if="row.auth_configured" size="small" type="success">{{ row.auth_type || '已配置' }}</el-tag>
+            <span v-else class="gs-text-muted">-</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="260" align="center" fixed="right">
+          <template #default="{ row }">
+            <el-button
+              size="small"
+              :icon="EditPen"
+              @click="openEdit(row)"
+            >编辑</el-button>
             <el-button
               size="small"
               type="primary"
@@ -64,8 +75,8 @@
     </div>
 
     <!-- 添加仓库对话框 -->
-    <el-dialog v-model="showAdd" title="添加代码仓库" width="520px" :close-on-click-modal="false" @closed="resetForm">
-      <el-form :model="newRepo" label-width="100px">
+    <el-dialog v-model="showAdd" title="添加代码仓库" width="560px" :close-on-click-modal="false" @closed="resetForm">
+      <el-form :model="newRepo" label-width="120px">
         <el-form-item label="仓库名称" required>
           <el-input v-model="newRepo.name" placeholder="例如: my-project" maxlength="128" />
         </el-form-item>
@@ -75,10 +86,54 @@
         <el-form-item label="默认分支">
           <el-input v-model="newRepo.default_branch" placeholder="main" />
         </el-form-item>
+        <el-form-item label="鉴权方式">
+          <el-select v-model="newRepo.auth_type" placeholder="无（公开仓）" clearable style="width:100%">
+            <el-option label="无（公开仓）" value="" />
+            <el-option label="HTTPS Token" value="https_token" />
+            <el-option label="SSH 私钥" value="ssh_key" />
+          </el-select>
+        </el-form-item>
+        <el-form-item v-if="newRepo.auth_type === 'https_token'" label="Token 环境变量名">
+          <el-input v-model="newRepo.auth_secret_ref" placeholder="例如: GIT_TOKEN_REPO_1" maxlength="256" />
+          <div class="gs-form-hint">在服务器上设置该环境变量为 Git Token，切勿填写 token 本身</div>
+        </el-form-item>
+        <el-form-item v-if="newRepo.auth_type === 'ssh_key'" label="私钥路径环境变量名">
+          <el-input v-model="newRepo.auth_secret_ref" placeholder="例如: GIT_SSH_KEY_PATH" maxlength="256" />
+          <div class="gs-form-hint">在服务器上设置该环境变量为 SSH 私钥文件路径</div>
+        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="showAdd = false">取消</el-button>
         <el-button type="primary" @click="addRepo" :loading="adding" :disabled="!newRepo.name.trim() || !newRepo.git_url.trim()">添加</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 编辑仓库（鉴权）对话框 -->
+    <el-dialog v-model="showEdit" title="编辑仓库" width="560px" :close-on-click-modal="false" @closed="resetEditForm">
+      <el-form :model="editRepo" label-width="120px">
+        <el-form-item label="Git URL">
+          <el-input v-model="editRepo.git_url" placeholder="https://..." />
+        </el-form-item>
+        <el-form-item label="默认分支">
+          <el-input v-model="editRepo.default_branch" placeholder="main" />
+        </el-form-item>
+        <el-form-item label="鉴权方式">
+          <el-select v-model="editRepo.auth_type" placeholder="无" clearable style="width:100%">
+            <el-option label="无（公开仓）" value="" />
+            <el-option label="HTTPS Token" value="https_token" />
+            <el-option label="SSH 私钥" value="ssh_key" />
+          </el-select>
+        </el-form-item>
+        <el-form-item v-if="editRepo.auth_type === 'https_token'" label="Token 环境变量名">
+          <el-input v-model="editRepo.auth_secret_ref" placeholder="例如: GIT_TOKEN_REPO_1" maxlength="256" />
+        </el-form-item>
+        <el-form-item v-if="editRepo.auth_type === 'ssh_key'" label="私钥路径环境变量名">
+          <el-input v-model="editRepo.auth_secret_ref" placeholder="例如: GIT_SSH_KEY_PATH" maxlength="256" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showEdit = false">取消</el-button>
+        <el-button type="primary" @click="saveEdit" :loading="saving">保存</el-button>
       </template>
     </el-dialog>
   </div>
@@ -87,7 +142,7 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Refresh, Delete } from '@element-plus/icons-vue'
+import { Refresh, Delete, EditPen } from '@element-plus/icons-vue'
 import api from '../../api.js'
 
 const props = defineProps({
@@ -100,7 +155,10 @@ const repos = ref([])
 const showAdd = ref(false)
 const adding = ref(false)
 const syncingId = ref(null)
-const newRepo = ref({ name: '', git_url: '', default_branch: 'main' })
+const newRepo = ref({ name: '', git_url: '', default_branch: 'main', auth_type: '', auth_secret_ref: '' })
+const showEdit = ref(false)
+const saving = ref(false)
+const editRepo = ref({ repo_id: null, git_url: '', default_branch: 'main', auth_type: '', auth_secret_ref: '' })
 
 function syncTagType(status) {
   if (status === 'success') return 'success'
@@ -138,6 +196,8 @@ async function addRepo() {
       name: newRepo.value.name.trim(),
       git_url: newRepo.value.git_url.trim(),
       default_branch: newRepo.value.default_branch.trim() || 'main',
+      auth_type: newRepo.value.auth_type || undefined,
+      auth_secret_ref: newRepo.value.auth_secret_ref?.trim() || undefined,
     })
     ElMessage.success('仓库添加成功')
     showAdd.value = false
@@ -180,8 +240,52 @@ async function confirmDelete(row) {
 }
 
 function resetForm() {
-  newRepo.value = { name: '', git_url: '', default_branch: 'main' }
+  newRepo.value = { name: '', git_url: '', default_branch: 'main', auth_type: '', auth_secret_ref: '' }
+}
+
+function openEdit(row) {
+  editRepo.value = {
+    repo_id: row.repo_id,
+    git_url: row.git_url,
+    default_branch: row.default_branch,
+    auth_type: row.auth_type || '',
+    auth_secret_ref: '', // never send existing secret ref to client; user re-enters env var name if needed
+  }
+  showEdit.value = true
+}
+
+function resetEditForm() {
+  editRepo.value = { repo_id: null, git_url: '', default_branch: 'main', auth_type: '', auth_secret_ref: '' }
+}
+
+async function saveEdit() {
+  if (!editRepo.value.repo_id) return
+  saving.value = true
+  try {
+    const body = {}
+    if (editRepo.value.git_url) body.git_url = editRepo.value.git_url.trim()
+    if (editRepo.value.default_branch) body.default_branch = editRepo.value.default_branch.trim()
+    body.auth_type = editRepo.value.auth_type || null
+    body.auth_secret_ref = editRepo.value.auth_secret_ref?.trim() || null
+    await api.updateRepo(props.projectId, editRepo.value.repo_id, body)
+    ElMessage.success('仓库已更新')
+    showEdit.value = false
+    await loadRepos()
+  } catch (e) {
+    ElMessage.error('更新失败: ' + e.message)
+  } finally {
+    saving.value = false
+  }
 }
 
 onMounted(loadRepos)
 </script>
+
+<style scoped>
+.gs-form-hint {
+  font-size: 12px;
+  color: var(--gs-text-muted);
+  margin-top: 4px;
+}
+.gs-text-muted { color: var(--gs-text-muted); }
+</style>

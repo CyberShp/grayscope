@@ -92,6 +92,20 @@
               <el-option v-for="m in currentAiModels" :key="m" :label="m" :value="m" />
             </el-select>
           </el-form-item>
+
+          <el-divider>深度分析配置</el-divider>
+          <el-form-item label="调用图深度">
+            <el-slider v-model="form.options.callgraph_depth" :min="2" :max="20" :step="1" show-stops show-input style="max-width:400px" />
+            <div style="color:#909399;font-size:12px;margin-top:2px">控制调用链追踪层级（建议 8-15）</div>
+          </el-form-item>
+          <el-form-item label="数据流分析">
+            <el-switch v-model="form.options.enable_data_flow" active-text="启用" inactive-text="关闭" />
+            <div style="color:#909399;font-size:12px;margin-top:2px">跨函数参数传播 & 污点追踪（依赖调用图）</div>
+          </el-form-item>
+          <el-form-item label="跨模块AI综合">
+            <el-switch v-model="form.options.enable_cross_module_ai" active-text="启用" inactive-text="关闭" />
+            <div style="color:#909399;font-size:12px;margin-top:2px">分析完成后执行全局风险综合 & 端到端测试建议</div>
+          </el-form-item>
         </el-form>
         <div style="text-align:center;margin-top:20px">
           <el-button @click="step = 0">上一步</el-button>
@@ -178,9 +192,9 @@ export default {
         task_type: 'full',
         target: { path: '' },
         revision: { branch: 'main', base_commit: '', head_commit: '' },
-        analyzers: ['branch_path', 'boundary_value', 'error_path', 'call_graph', 'concurrency', 'diff_impact', 'coverage_map'],
+        analyzers: ['branch_path', 'boundary_value', 'error_path', 'call_graph', 'data_flow', 'concurrency', 'diff_impact', 'coverage_map'],
         ai: { provider: savedProvider, model: savedModel, prompt_profile: 'default-v1' },
-        options: { max_files: 500, risk_threshold: 0.6 },
+        options: { max_files: 500, risk_threshold: 0.6, callgraph_depth: 12, enable_data_flow: true, enable_cross_module_ai: true },
       },
       submitting: false,
       result: null,

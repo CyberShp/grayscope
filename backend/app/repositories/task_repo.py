@@ -84,6 +84,23 @@ def set_aggregate_score(db: Session, task_id: str, score: float) -> None:
         db.commit()
 
 
+def set_cross_module_ai(db: Session, task_id: str, ai_json: str) -> None:
+    """保存跨模块 AI 综合分析结果到任务的扩展 JSON 字段。"""
+    import json as _json
+    obj = get_task_by_id(db, task_id)
+    if obj:
+        # 存到 error_json 中作为扩展数据（不影响错误语义，用 key 区分）
+        existing = {}
+        if obj.error_json:
+            try:
+                existing = _json.loads(obj.error_json)
+            except Exception:
+                existing = {"_original": obj.error_json}
+        existing["cross_module_ai"] = _json.loads(ai_json) if isinstance(ai_json, str) else ai_json
+        obj.error_json = _json.dumps(existing, ensure_ascii=False, default=str)
+        db.commit()
+
+
 # ---------- module result CRUD ----------
 
 

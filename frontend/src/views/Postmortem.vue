@@ -39,7 +39,7 @@
               <el-input v-model="form.defect.description" type="textarea" :rows="4" placeholder="详细描述缺陷现象和影响" />
             </el-form-item>
             <el-form-item label="关联提交">
-              <el-input v-model="form.defect.related_commit" placeholder="git commit hash（可选）" />
+              <el-input v-model="form.defect.related_commit" placeholder="Git 提交哈希（可选）" />
             </el-form-item>
             <el-form-item>
               <el-button type="primary" @click="submit" :loading="submitting" :disabled="!form.defect.title">

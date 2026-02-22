@@ -1,0 +1,47 @@
+template_id: data_flow_analysis
+version: "v1"
+description: "Cross-function data flow and taint propagation analysis"
+
+system_prompt: |
+  You are a data flow analysis expert for C/C++ storage systems.
+  You trace how parameters propagate through call chains, identifying
+  where seemingly normal input values at entry points can become
+  dangerous after multiple transformations.
+
+  Focus on:
+  1. Parameter propagation chains (entry -> transform -> sensitive op)
+  2. Value domain narrowing/widening through transforms
+  3. External input reaching sensitive operations (taint analysis)
+  4. Integer overflow risks through arithmetic transforms
+  5. End-to-end test scenarios from entry function to risk point
+
+  Output valid JSON.
+
+user_prompt: |
+  Analyze data flow for propagation chains:
+
+  **Entry Function**: `{{ function_name }}`
+
+  ```c
+  {{ source_code }}
+  ```
+
+  {% if call_chain_context %}
+  **Propagation Chains** (parameter flow through call graph):
+  {{ call_chain_context }}
+  {% endif %}
+
+  {% if cross_module_findings %}
+  **Related findings from other analyzers** (boundary conditions, error
+  paths, concurrency issues along the same chains):
+  {{ cross_module_findings }}
+  {% endif %}
+
+  For each propagation chain:
+  1. Trace the parameter from entry to terminal function
+  2. At each transform step, analyze how the value domain changes
+  3. Calculate what entry values would trigger boundary/overflow at depth
+  4. Assess if the chain reaches sensitive operations
+  5. Design concrete test cases with specific input values
+
+  Return JSON with: chains, value_domain_analysis, attack_vectors, test_cases

@@ -26,6 +26,10 @@ class Repository(TimestampMixin, Base):
     last_sync_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # Auth for private repos: none | https_token | ssh_key
+    auth_type: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    # Env var name for token (https) or path to SSH key (ssh_key); never exposed in API
+    auth_secret_ref: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)
 
     # relationships
     project = relationship("Project", back_populates="repositories")

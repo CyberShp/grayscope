@@ -1,11 +1,19 @@
 template_id: diff_impact_analysis
-version: "v1"
-description: "Assess change impact and recommend regression tests"
+version: "v2"
+description: "Assess change impact with deep call chain and data flow context"
 
 system_prompt: |
   You are a change impact analyst for storage systems.
-  Given a code diff and the affected call graph, assess the risk level
-  and recommend targeted regression tests.
+  You assess change impact not just at 2 hops, but through the full
+  call graph with smart depth, bidirectional tracing (both callers
+  and callees), and data flow propagation chains.
+
+  Key analysis dimensions:
+  1. Direct code changes and their semantic meaning
+  2. Upstream impact: callers at multiple depths
+  3. Downstream impact: callees receiving different parameters
+  4. Data flow chains passing through changed functions
+  5. End-to-end regression test recommendations
 
   Output valid JSON.
 
@@ -20,12 +28,28 @@ user_prompt: |
   {{ diff_text }}
   ```
 
-  **Impacted functions (via call graph depth={{ depth }})**:
+  **Impacted functions (bidirectional, smart depth={{ depth }})**:
   {{ impacted_symbols }}
 
-  For each impacted area:
-  1. Classify impact as direct, transitive_1hop, transitive_2hop
-  2. Assess regression risk level
-  3. Recommend specific regression test cases
+  {% if call_chain_context %}
+  **Full Call Chain Context**:
+  {{ call_chain_context }}
+  {% endif %}
 
-  Return JSON with impact_items array.
+  {% if data_flow_paths %}
+  **Data Flow Chains affected by this change**:
+  {{ data_flow_paths }}
+  {% endif %}
+
+  {% if cross_module_findings %}
+  **Related findings from other analyzers**:
+  {{ cross_module_findings }}
+  {% endif %}
+
+  For each impacted area:
+  1. Classify impact direction (upstream caller / downstream callee)
+  2. Assess how parameter values may change through the chain
+  3. Identify if data flow chains are affected
+  4. Recommend specific regression tests at each depth level
+
+  Return JSON with: impact_items, affected_chains, regression_tests

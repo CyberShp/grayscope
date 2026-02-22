@@ -28,10 +28,44 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+def _migrate_repo_auth_columns():
+    """Add auth_type, auth_secret_ref to repositories if missing (e.g. existing DBs)."""
+    from sqlalchemy import text
+    for col, typ in (("auth_type", "VARCHAR(32)"), ("auth_secret_ref", "VARCHAR(256)")):
+        try:
+            with engine.connect() as conn:
+                conn.execute(text(f"ALTER TABLE repositories ADD COLUMN {col} {typ}"))
+                conn.commit()
+            logger.info("repositories: added column %s", col)
+        except Exception as e:
+            if "duplicate" in str(e).lower() or "already exists" in str(e).lower():
+                pass
+            else:
+                logger.warning("repositories migration %s: %s", col, e)
+
+
+def _migrate_test_case_hint_columns():
+    """Add execution_hint, example_input, expected_failure, unacceptable_outcomes_json, related_functions_json to test_cases if missing."""
+    from sqlalchemy import text
+    for col in ("execution_hint", "example_input", "expected_failure", "unacceptable_outcomes_json", "related_functions_json"):
+        try:
+            with engine.connect() as conn:
+                conn.execute(text(f"ALTER TABLE test_cases ADD COLUMN {col} TEXT"))
+                conn.commit()
+            logger.info("test_cases: added column %s", col)
+        except Exception as e:
+            if "duplicate" in str(e).lower() or "already exists" in str(e).lower():
+                pass
+            else:
+                logger.warning("test_cases migration %s: %s", col, e)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # 启动：创建数据库表（开发便利；生产环境使用 Alembic）
     Base.metadata.create_all(bind=engine)
+    _migrate_repo_auth_columns()
+    _migrate_test_case_hint_columns()
     logger.info("数据库表已就绪")
     yield
     # 关闭

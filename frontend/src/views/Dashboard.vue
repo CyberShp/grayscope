@@ -152,7 +152,7 @@ export default {
         { label: '项目数', value: this.stats.projects, icon: FolderOpened, color: '#409EFF' },
         { label: '分析任务', value: this.stats.tasks, icon: DataAnalysis, color: '#67C23A' },
         { label: '风险发现', value: this.stats.findings, icon: Warning, color: '#E6A23C' },
-        { label: '平均风险分', value: this.stats.avgRisk.toFixed(2), icon: TrendCharts, color: '#F56C6C' },
+        { label: '平均风险评分', value: this.stats.avgRisk.toFixed(2), icon: TrendCharts, color: '#F56C6C' },
       ]
     },
     pieOption() {

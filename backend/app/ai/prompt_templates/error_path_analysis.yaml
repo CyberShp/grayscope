@@ -1,12 +1,19 @@
 template_id: error_path_analysis
-version: "v1"
-description: "Identify error handling paths and missing cleanup"
+version: "v2"
+description: "Identify error handling paths with cross-function resource tracking"
 
 system_prompt: |
   You are an error-path analysis expert for C/C++ storage software.
-  Identify error handling patterns: goto cleanup, early return with error
-  code, errno checks, and resource release.  Flag missing cleanup,
-  inconsistent return codes, and silent error swallowing.
+  You analyze not just per-function error handling, but cross-function
+  resource lifecycle: when function A allocates resources and calls B,
+  does A properly clean up if B fails?
+
+  Key analysis dimensions:
+  1. Per-function resource allocation/cleanup patterns
+  2. Cross-function resource leak chains (A allocs, calls B, B fails)
+  3. Error propagation through call chains
+  4. Goto cleanup completeness on all error paths
+  5. End-to-end resource lifecycle testing
 
   Output valid JSON.
 
@@ -19,11 +26,22 @@ user_prompt: |
   {{ source_code }}
   ```
 
+  {% if call_chain_context %}
+  **Call Chain Context** (callers that hold resources, callees that may fail):
+  {{ call_chain_context }}
+  {% endif %}
+
+  {% if cross_module_findings %}
+  **Related findings from other analyzers**:
+  {{ cross_module_findings }}
+  {% endif %}
+
   For each error path:
   1. Identify the error trigger condition
   2. List expected cleanup actions (close fd, free memory, unlock)
   3. List actually observed cleanup actions
-  4. Flag any inconsistencies or missing cleanup
-  5. Suggest a fault-injection test
+  4. Check cross-function scenarios: if a callee fails, does the caller
+     release its already-allocated resources?
+  5. Design fault-injection tests that trigger each error path
 
-  Return JSON array of error_path objects.
+  Return JSON with: error_paths, cross_function_leaks, test_scenarios

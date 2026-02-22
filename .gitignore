@@ -37,3 +37,12 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Workspaces (cloned repos)
+backend/workspaces/
+
+# Vite cache
+frontend/.vite/
+
+# Build output
+frontend/dist/

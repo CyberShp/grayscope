@@ -25,7 +25,7 @@
              :class="{ 'gs-cfg-branch-active': highlightBranch === 'true' }"
              @click="selectBranch('true')" style="cursor:pointer;">
           <div class="gs-cfg-branch-label">
-            <el-tag type="success" size="small">TRUE 分支</el-tag>
+            <el-tag type="success" size="small">条件成立分支</el-tag>
             <span class="gs-cfg-branch-desc">条件成立: <code>{{ conditionExpr }}</code></span>
             <span v-if="highlightBranch === 'true'" class="gs-cfg-highlight-hint">← CFG 已高亮</span>
           </div>
@@ -43,7 +43,7 @@
              :class="{ 'gs-cfg-branch-active': highlightBranch === 'false' }"
              @click="selectBranch('false')" style="cursor:pointer;">
           <div class="gs-cfg-branch-label">
-            <el-tag :type="pathType === 'error' ? 'danger' : 'warning'" size="small">FALSE 分支</el-tag>
+            <el-tag :type="pathType === 'error' ? 'danger' : 'warning'" size="small">条件不成立分支</el-tag>
             <span class="gs-cfg-branch-desc">条件不成立: <code>{{ negatedCondition }}</code></span>
             <span v-if="highlightBranch === 'false'" class="gs-cfg-highlight-hint">← CFG 已高亮</span>
           </div>
@@ -87,8 +87,8 @@
             <el-input v-model="item.input" placeholder="输入值，例如: n=0" size="small" style="flex:2;" />
             <el-input v-model="item.expected" placeholder="预期结果" size="small" style="flex:2;" />
             <el-select v-model="item.branch" placeholder="分支" size="small" style="width:100px;">
-              <el-option label="TRUE" value="true" />
-              <el-option label="FALSE" value="false" />
+              <el-option label="成立" value="true" />
+              <el-option label="不成立" value="false" />
               <el-option label="边界" value="boundary" />
             </el-select>
             <el-button size="small" type="danger" plain :icon="Delete" @click="customInputs.splice(idx, 1)" circle />

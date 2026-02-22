@@ -132,6 +132,35 @@
                     </div>
                   </div>
 
+                  <!-- 调用链上下文 -->
+                  <div v-if="row.evidence && row.evidence.propagation_chain && row.evidence.propagation_chain.length > 1" class="gs-propagation-block">
+                    <div class="gs-propagation-title">
+                      <el-icon style="color:#8B5CF6;"><Connection /></el-icon>
+                      调用链上下文（{{ row.evidence.propagation_chain.length }} 层传播）
+                    </div>
+                    <div class="gs-propagation-chain">
+                      <div v-for="(step, idx) in row.evidence.propagation_chain" :key="idx" class="gs-propagation-step"
+                           :class="{ 'gs-propagation-entry': idx === 0, 'gs-propagation-sink': idx === row.evidence.propagation_chain.length - 1 }">
+                        <div class="gs-propagation-step-num">{{ idx + 1 }}</div>
+                        <div class="gs-propagation-step-body">
+                          <code class="gs-propagation-func">{{ step.function }}({{ step.param }})</code>
+                          <span v-if="step.transform && step.transform !== 'none'" class="gs-propagation-transform">
+                            变换: <code>{{ step.transform }}{{ step.transform_expr ? '(' + step.transform_expr + ')' : '' }}</code>
+                          </span>
+                          <span v-else-if="idx < row.evidence.propagation_chain.length - 1" class="gs-propagation-passthrough">直接传递</span>
+                        </div>
+                        <div v-if="idx < row.evidence.propagation_chain.length - 1" class="gs-propagation-arrow">↓</div>
+                      </div>
+                    </div>
+                    <div v-if="row.evidence.is_external_input" class="gs-propagation-external-warn">
+                      <el-icon><WarningFilled /></el-icon>
+                      入口参数来自外部输入（攻击者可控）
+                    </div>
+                    <div v-if="row.evidence.attack_scenario" class="gs-propagation-scenario">
+                      <strong>攻击场景:</strong> {{ row.evidence.attack_scenario }}
+                    </div>
+                  </div>
+
                   <!-- 代码位置（可点击跳转） -->
                   <div v-if="row.file_path" class="gs-risk-location-block">
                     <strong>代码位置:</strong>
@@ -310,6 +339,69 @@
           </div>
 
           <div v-else class="gs-ai-results">
+            <!-- 跨模块 AI 综合分析 -->
+            <div v-if="crossModuleAi && crossModuleAi.success" class="gs-ai-cross-module-card">
+              <div class="gs-ai-module-header">
+                <span class="gs-ai-module-name" style="color:#8B5CF6;">跨模块综合分析</span>
+                <el-tag type="success" size="small">全局视角</el-tag>
+                <span v-if="crossModuleAi.provider" style="font-size:11px;color:var(--gs-text-muted);margin-left:auto;">
+                  {{ crossModuleAi.provider }}/{{ crossModuleAi.model }}
+                </span>
+              </div>
+
+              <div v-if="crossModuleAi.cross_module_risks && crossModuleAi.cross_module_risks.length" class="gs-ai-cross-section">
+                <div class="gs-ai-section-title">跨模块关联风险</div>
+                <div v-for="(risk, i) in crossModuleAi.cross_module_risks" :key="'cmr'+i" class="gs-ai-cross-item gs-ai-cross-risk">
+                  <div class="gs-ai-cross-item-header">
+                    <el-icon color="#D50000"><WarningFilled /></el-icon>
+                    <strong>{{ risk.title || risk.name || `关联风险 ${i+1}` }}</strong>
+                    <el-tag v-if="risk.severity" :type="risk.severity === 'high' ? 'danger' : risk.severity === 'medium' ? 'warning' : 'info'" size="small">{{ risk.severity }}</el-tag>
+                  </div>
+                  <p v-if="risk.description" class="gs-ai-cross-desc">{{ risk.description }}</p>
+                  <div v-if="risk.modules && risk.modules.length" class="gs-ai-cross-modules">
+                    涉及模块: <el-tag v-for="m in risk.modules" :key="m" size="small" style="margin:2px;">{{ getDisplayName(m) }}</el-tag>
+                  </div>
+                </div>
+              </div>
+
+              <div v-if="crossModuleAi.hidden_risk_paths && crossModuleAi.hidden_risk_paths.length" class="gs-ai-cross-section">
+                <div class="gs-ai-section-title">隐藏风险路径</div>
+                <div v-for="(path, i) in crossModuleAi.hidden_risk_paths" :key="'hrp'+i" class="gs-ai-cross-item gs-ai-cross-hidden">
+                  <div class="gs-ai-cross-item-header">
+                    <el-icon color="#E57F00"><WarningFilled /></el-icon>
+                    <strong>{{ path.title || `隐藏路径 ${i+1}` }}</strong>
+                  </div>
+                  <p v-if="path.description" class="gs-ai-cross-desc">{{ path.description }}</p>
+                  <div v-if="path.chain" class="gs-ai-cross-chain">
+                    路径: <code>{{ Array.isArray(path.chain) ? path.chain.join(' → ') : path.chain }}</code>
+                  </div>
+                </div>
+              </div>
+
+              <div v-if="crossModuleAi.e2e_test_scenarios && crossModuleAi.e2e_test_scenarios.length" class="gs-ai-cross-section">
+                <div class="gs-ai-section-title">端到端测试场景</div>
+                <div v-for="(scenario, i) in crossModuleAi.e2e_test_scenarios" :key="'e2e'+i" class="gs-ai-cross-item gs-ai-cross-scenario">
+                  <div class="gs-ai-cross-item-header">
+                    <el-icon color="#4B9FD5"><EditPen /></el-icon>
+                    <strong>{{ scenario.title || scenario.name || `场景 ${i+1}` }}</strong>
+                    <el-tag v-if="scenario.priority" size="small">{{ scenario.priority }}</el-tag>
+                  </div>
+                  <p v-if="scenario.description || scenario.steps" class="gs-ai-cross-desc">{{ scenario.description || scenario.steps }}</p>
+                  <p v-if="scenario.expected" class="gs-ai-cross-expected"><strong>预期:</strong> {{ scenario.expected }}</p>
+                </div>
+              </div>
+
+              <div v-if="crossModuleAi.methodology_advice" class="gs-ai-cross-section">
+                <div class="gs-ai-section-title">测试方法论建议</div>
+                <pre class="gs-ai-text">{{ crossModuleAi.methodology_advice }}</pre>
+              </div>
+
+              <div v-if="crossModuleAi.usage && crossModuleAi.usage.total_tokens" class="gs-ai-usage">
+                Token 使用量：{{ crossModuleAi.usage.prompt_tokens || 0 }}（输入）+ {{ crossModuleAi.usage.completion_tokens || 0 }}（输出）= {{ crossModuleAi.usage.total_tokens }}
+              </div>
+            </div>
+
+            <!-- 单模块 AI 分析 -->
             <div v-for="(summary, modId) in aiSummaries" :key="modId" class="gs-ai-module-card">
               <div class="gs-ai-module-header">
                 <span class="gs-ai-module-name">{{ getDisplayName(modId) }}</span>
@@ -347,7 +439,7 @@
               </div>
 
               <div v-if="summary.usage && summary.usage.total_tokens" class="gs-ai-usage">
-                Token 用量: {{ summary.usage.prompt_tokens || 0 }} + {{ summary.usage.completion_tokens || 0 }} = {{ summary.usage.total_tokens }}
+                Token 使用量：{{ summary.usage.prompt_tokens || 0 }}（输入）+ {{ summary.usage.completion_tokens || 0 }}（输出）= {{ summary.usage.total_tokens }}
               </div>
             </div>
           </div>
@@ -367,6 +459,11 @@
                 <el-icon :size="32" color="#00AA00"><Grid /></el-icon>
                 <div class="gs-export-label">CSV 表格</div>
                 <div class="gs-export-desc">可导入测试管理工具</div>
+              </div>
+              <div class="gs-export-card" @click="doExport('markdown')">
+                <el-icon :size="32" color="#7C3AED"><Document /></el-icon>
+                <div class="gs-export-label">Markdown 清单</div>
+                <div class="gs-export-desc">含步骤、预期、如何执行，便于新手对照</div>
               </div>
               <div class="gs-export-card" @click="doExport('findings')">
                 <el-icon :size="32" color="#EAB308"><DataLine /></el-icon>
@@ -388,18 +485,19 @@ import { RadarChart } from 'echarts/charts'
 import { TitleComponent, TooltipComponent, LegendComponent } from 'echarts/components'
 import VChart from 'vue-echarts'
 import { ElMessage } from 'element-plus'
-import { WarningFilled } from '@element-plus/icons-vue'
+import { WarningFilled, Connection, EditPen } from '@element-plus/icons-vue'
 import api from '../api.js'
 import { useRiskColor } from '../composables/useRiskColor.js'
 import { useModuleNames } from '../composables/useModuleNames.js'
 import { useTestSuggestion } from '../composables/useTestSuggestion.js'
+import { getRiskTypeName } from '../composables/useRiskTypeNames.js'
 import EvidenceRenderer from '../components/EvidenceRenderer.vue'
 
 use([CanvasRenderer, RadarChart, TitleComponent, TooltipComponent, LegendComponent])
 
 export default {
   name: 'TaskDetail',
-  components: { VChart, EvidenceRenderer, WarningFilled },
+  components: { VChart, EvidenceRenderer, WarningFilled, Connection, EditPen },
   props: { taskId: String },
   setup() {
     const { riskColor, riskLevel, severityType, statusType, statusLabel } = useRiskColor()
@@ -414,6 +512,7 @@ export default {
       modules: [],
       findings: [],
       aiSummaries: {},
+      crossModuleAi: null,
       activeTab: 'modules',
       filterSeverity: '',
       filterModule: '',
@@ -487,6 +586,15 @@ export default {
         this.task = await api.getTaskStatus(this.taskId)
         this.results = await api.getTaskResults(this.taskId)
         this.modules = this.results.modules || []
+        // 尝试读取跨模块 AI 综合结果（存储在 task 的 error_json 中）
+        if (this.task.error_json) {
+          try {
+            const errData = typeof this.task.error_json === 'string' ? JSON.parse(this.task.error_json) : this.task.error_json
+            if (errData && errData.cross_module_ai) {
+              this.crossModuleAi = errData.cross_module_ai
+            }
+          } catch {}
+        }
       } catch {}
       try {
         const url = api.exportUrl(this.taskId, 'findings')
@@ -509,26 +617,14 @@ export default {
       if (type.includes('critical') || type.includes('crash') || type.includes('deadlock')) return 'danger'
       if (type.includes('error') || type.includes('cleanup')) return 'danger'
       if (type.includes('race') || type.includes('leak') || type.includes('overflow')) return 'warning'
-      if (type.includes('boundary')) return 'warning'
-      if (type.includes('state')) return ''
+      if (type.includes('boundary') || type.includes('transform_risk')) return 'warning'
+      if (type.includes('external_to_sensitive') || type.includes('deep_param')) return 'danger'
+      if (type.includes('cross_function')) return 'danger'
+      if (type.includes('state') || type.includes('impact')) return ''
       return ''
     },
     riskTypeLabel(type) {
-      const map = {
-        branch_error: '错误处理分支',
-        branch_cleanup: '资源清理分支',
-        branch_boundary: '边界条件分支',
-        branch_state: '状态/模式判断',
-        branch_normal: '正常分支',
-        boundary_miss: '边界值缺失',
-        invalid_input_gap: '无效输入风险',
-        changed_core_path: '核心路径变更',
-        error_path_incomplete: '错误路径不完整',
-        error_no_check: '缺少错误检查',
-        race_condition: '竞态条件',
-        deadlock_risk: '死锁风险',
-      }
-      return map[type] || type
+      return getRiskTypeName(type)
     },
     shortenPath(path) {
       if (!path) return '-'
@@ -721,6 +817,66 @@ export default {
 .gs-file-link:hover { text-decoration: underline; }
 .gs-file-path { font-family: var(--gs-font-mono); font-size: 12px; }
 
+/* ── 调用链上下文 ──────────────────── */
+.gs-propagation-block {
+  background: rgba(139, 92, 246, 0.04);
+  border: 1px solid rgba(139, 92, 246, 0.15);
+  border-radius: 8px; padding: 12px 16px; margin-bottom: 12px;
+}
+.gs-propagation-title {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 14px; font-weight: 600; color: #8B5CF6; margin-bottom: 10px;
+}
+.gs-propagation-chain {
+  display: flex; flex-direction: column; gap: 2px;
+  padding-left: 4px;
+}
+.gs-propagation-step {
+  display: flex; align-items: center; gap: 8px;
+  position: relative;
+}
+.gs-propagation-step-num {
+  min-width: 24px; height: 24px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 50%; font-size: 11px; font-weight: 700;
+  background: rgba(139, 92, 246, 0.1); color: #8B5CF6;
+}
+.gs-propagation-entry .gs-propagation-step-num {
+  background: rgba(0, 170, 0, 0.15); color: #00AA00;
+}
+.gs-propagation-sink .gs-propagation-step-num {
+  background: rgba(213, 0, 0, 0.15); color: #D50000;
+}
+.gs-propagation-step-body {
+  display: flex; align-items: center; gap: 8px; flex: 1;
+}
+.gs-propagation-func {
+  font-family: var(--gs-font-mono); font-size: 12px;
+  background: rgba(139, 92, 246, 0.08); padding: 2px 8px; border-radius: 4px;
+}
+.gs-propagation-transform {
+  font-size: 11px; color: #E57F00;
+}
+.gs-propagation-transform code {
+  background: rgba(229, 127, 0, 0.1); padding: 1px 4px; border-radius: 3px;
+}
+.gs-propagation-passthrough {
+  font-size: 11px; color: var(--gs-text-muted);
+}
+.gs-propagation-arrow {
+  color: #8B5CF6; font-size: 14px; font-weight: bold;
+  padding-left: 6px;
+}
+.gs-propagation-external-warn {
+  display: flex; align-items: center; gap: 6px;
+  margin-top: 8px; padding: 6px 10px;
+  background: rgba(213, 0, 0, 0.06); border-radius: 6px;
+  font-size: 12px; color: #D50000; font-weight: 600;
+}
+.gs-propagation-scenario {
+  margin-top: 8px; font-size: 12px; color: var(--gs-text-secondary); line-height: 1.5;
+}
+
 /* ── AI 增强 ──────────────────────── */
 .gs-ai-empty {
   padding: 48px; text-align: center;
@@ -759,4 +915,41 @@ export default {
   font-size: 11px; color: var(--gs-text-muted); margin-top: 8px;
   padding-top: 8px; border-top: 1px solid var(--gs-border);
 }
+
+/* ── 跨模块 AI 综合 ────────────────── */
+.gs-ai-cross-module-card {
+  border: 2px solid rgba(139, 92, 246, 0.3);
+  border-radius: 10px; padding: 16px;
+  background: linear-gradient(135deg, rgba(139, 92, 246, 0.03), rgba(75, 159, 213, 0.03));
+  margin-bottom: 8px;
+}
+.gs-ai-cross-section {
+  margin-bottom: 16px;
+}
+.gs-ai-cross-item {
+  background: var(--gs-surface); border-radius: 8px; padding: 12px;
+  margin-bottom: 8px; border: 1px solid var(--gs-border);
+}
+.gs-ai-cross-item-header {
+  display: flex; align-items: center; gap: 6px; margin-bottom: 6px;
+}
+.gs-ai-cross-desc {
+  margin: 0; font-size: 13px; color: var(--gs-text-secondary); line-height: 1.6;
+}
+.gs-ai-cross-modules {
+  margin-top: 6px; font-size: 12px; color: var(--gs-text-muted);
+}
+.gs-ai-cross-chain {
+  margin-top: 6px; font-size: 12px;
+}
+.gs-ai-cross-chain code {
+  background: rgba(139, 92, 246, 0.08); padding: 2px 6px; border-radius: 4px;
+  font-family: var(--gs-font-mono); font-size: 11px;
+}
+.gs-ai-cross-expected {
+  margin: 4px 0 0; font-size: 12px; color: var(--gs-success);
+}
+.gs-ai-cross-risk { border-left: 3px solid #D50000; }
+.gs-ai-cross-hidden { border-left: 3px solid #E57F00; }
+.gs-ai-cross-scenario { border-left: 3px solid #4B9FD5; }
 </style>

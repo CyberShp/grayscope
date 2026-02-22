@@ -57,7 +57,7 @@
           :class="{ active: filters.riskType === rt.value }"
           @click="toggleFilter('riskType', rt.value)"
         >
-          <span style="font-size: 12px;">{{ rt.value }}</span>
+          <span style="font-size: 12px;">{{ rt.label }}</span>
           <span class="gs-facet-count">{{ rt.count }}</span>
         </div>
         <div v-if="riskTypeFacets.length > 8" class="gs-facet-more" @click="showAllRiskTypes = !showAllRiskTypes">
@@ -142,7 +142,7 @@
         <div class="gs-detail-section">
           <div class="gs-detail-label">风险信息</div>
           <div class="gs-detail-tags">
-            <span class="gs-tag">{{ selectedFinding.risk_type }}</span>
+            <span class="gs-tag">{{ getRiskTypeName(selectedFinding.risk_type) }}</span>
             <span class="gs-tag">{{ getDisplayName(selectedFinding.module_id) }}</span>
           </div>
         </div>
@@ -186,6 +186,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRiskColor } from '../composables/useRiskColor.js'
 import { useModuleNames } from '../composables/useModuleNames.js'
 import { useTestSuggestion } from '../composables/useTestSuggestion.js'
+import { getRiskTypeName } from '../composables/useRiskTypeNames.js'
 import { useAppStore } from '../stores/app.js'
 import EvidenceRenderer from '../components/EvidenceRenderer.vue'
 import api from '../api.js'
@@ -229,7 +230,9 @@ const severityFacets = computed(() =>
 const moduleFacets = computed(() =>
   buildFacets(allFindings.value, 'module_id').map(f => ({ ...f, label: getDisplayName(f.value) }))
 )
-const riskTypeFacets = computed(() => buildFacets(allFindings.value, 'risk_type'))
+const riskTypeFacets = computed(() =>
+  buildFacets(allFindings.value, 'risk_type').map(f => ({ ...f, label: getRiskTypeName(f.value) }))
+)
 
 const filteredFindings = computed(() => {
   let list = [...allFindings.value]

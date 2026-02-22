@@ -11,6 +11,8 @@ class RepoCreate(BaseModel):
     git_url: str = Field(..., min_length=1)
     default_branch: str = Field(default="main", max_length=128)
     local_mirror_path: Optional[str] = None
+    auth_type: Optional[str] = Field(default=None, max_length=32)
+    auth_secret_ref: Optional[str] = Field(default=None, max_length=256)
 
 
 class RepoOut(BaseModel):
@@ -21,6 +23,8 @@ class RepoOut(BaseModel):
     default_branch: str
     last_sync_status: str = "never"
     last_sync_at: Optional[datetime] = None
+    auth_type: Optional[str] = None
+    auth_configured: bool = False
 
     model_config = {"from_attributes": True}
 
@@ -34,7 +38,16 @@ class RepoOut(BaseModel):
             default_branch=obj.default_branch,
             last_sync_status=obj.last_sync_status,
             last_sync_at=obj.last_sync_at,
+            auth_type=getattr(obj, "auth_type", None),
+            auth_configured=bool(getattr(obj, "auth_secret_ref", None)),
         )
+
+
+class RepoUpdate(BaseModel):
+    git_url: Optional[str] = Field(default=None, min_length=1)
+    default_branch: Optional[str] = Field(default=None, max_length=128)
+    auth_type: Optional[str] = Field(default=None, max_length=32)
+    auth_secret_ref: Optional[str] = Field(default=None, max_length=256)
 
 
 class SyncRequest(BaseModel):

@@ -1,33 +1,53 @@
 template_id: concurrency_analysis
-version: "v1"
-description: "Detect concurrency risks in C/C++ code"
+version: "v2"
+description: "Detect concurrency risks with cross-function lock chain analysis"
 
 system_prompt: |
-  You are a concurrency analysis expert for C/C++ storage systems.
-  Identify shared state, lock usage patterns, potential race conditions,
-  lock-order inversions, and atomicity gaps.
+  You are a concurrency safety expert for C/C++ systems software.
+  You analyze not just per-function lock usage, but cross-function lock
+  holding chains: when function A holds lock_x and calls B which acquires
+  lock_y, the effective lock chain is [lock_x, lock_y].
+
+  Key analysis dimensions:
+  1. Per-function lock acquire/release patterns
+  2. Cross-function lock holding chains through the call graph
+  3. ABBA deadlock patterns across call chains
+  4. Shared variable races considering caller-callee relationships
+  5. Lock ordering violations that span multiple functions
 
   Output valid JSON.
 
 user_prompt: |
-  Analyze concurrency risks in:
+  Analyze concurrency safety in:
 
-  **Module**: `{{ module_path }}`
+  **Function**: `{{ function_name }}`
 
   ```c
   {{ source_code }}
   ```
 
-  Shared variables detected:
-  {{ shared_vars }}
+  {% if call_chain_context %}
+  **Call Chain Context** (who calls this function, who this function calls):
+  {{ call_chain_context }}
+  {% endif %}
 
-  Lock usage detected:
-  {{ lock_usage }}
+  {% if data_flow_paths %}
+  **Shared Variables and Data Flow**:
+  {{ data_flow_paths }}
+  {% endif %}
 
-  For each risk:
-  1. Describe the shared resource
-  2. Identify conflicting access sites
-  3. Assess deadlock or race probability
-  4. Suggest a concurrency test scenario
+  {% if cross_module_findings %}
+  **Related findings from other analyzers**:
+  {{ cross_module_findings }}
+  {% endif %}
 
-  Return JSON array of concurrency_risk objects.
+  Analyze:
+  1. Lock acquisition order in this function
+  2. If callers hold locks before calling this function, what is the
+     effective lock chain?
+  3. Are there ABBA deadlock risks when combining lock chains from
+     different call paths?
+  4. Shared variable access safety considering the full call graph
+  5. Recommend specific multi-threaded test scenarios
+
+  Return JSON with: lock_chains, deadlock_risks, race_conditions, test_scenarios

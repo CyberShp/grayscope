@@ -5,10 +5,38 @@
 
 const SEV_PRIORITY = { S0: 'P0-紧急', S1: 'P1-高', S2: 'P2-中', S3: 'P3-低' }
 
+function _buildChainPath(chain) {
+  if (!chain || !chain.length) return ''
+  return chain.map(s => `${s.function}(${s.param})`).join(' → ')
+}
+
 function getTestObjective(finding) {
   const sym = finding.symbol_name || '目标函数'
   const rt = finding.risk_type || ''
   const ev = finding.evidence || {}
+
+  // 如果有传播链，生成端到端测试目标
+  if (ev.propagation_chain && ev.propagation_chain.length > 1) {
+    const chain = ev.propagation_chain
+    const entry = chain[0]
+    const target = chain[chain.length - 1]
+    const depth = chain.length
+    const isExternal = ev.is_external_input
+
+    if (rt === 'boundary_miss' || rt === 'invalid_input_gap') {
+      return `从入口函数 ${entry.function}(${entry.param}) 开始，经过 ${depth} 层调用链到达 ${sym}() 处的${rt === 'boundary_miss' ? '边界条件' : '数组访问'}。${isExternal ? '入口参数来自外部输入，' : ''}构造使整条调用链端到端触发边界行为的测试值`
+    }
+    if (rt === 'deep_param_propagation') {
+      return `验证参数 '${ev.entry_param}' 从 ${ev.entry_function}() 经 ${depth} 层调用传播后的端到端行为：${ev.sensitive_ops?.length ? `到达敏感操作（${ev.sensitive_ops.join('、')}），` : ''}确认传播链上的值域变换不会导致意外风险`
+    }
+    if (rt === 'external_to_sensitive') {
+      return `验证外部输入参数 '${ev.entry_param}' 在 ${ev.entry_function}() 中到达敏感操作（${(ev.sensitive_ops || []).join('、')}）前是否经过充分验证`
+    }
+    if (rt === 'value_transform_risk') {
+      const transforms = ev.transforms || []
+      return `验证参数 '${ev.entry_param}' 经过 ${transforms.length} 次算术变换（${transforms.map(t => t.type).join('、')}）后不会溢出或丢失精度`
+    }
+  }
 
   const mapping = {
     branch_missing_test: `验证 ${sym}() 中未被测试覆盖的分支路径在各种输入下的行为`,
@@ -33,6 +61,12 @@ function getTestObjective(finding) {
     high_fan_out: `为高扇出枢纽函数 ${sym}()（调用 ${ev.fan_out || '多个'} 个函数）建立集成测试`,
     deep_impact_surface: `为被 ${ev.fan_in || '多个'} 个函数调用的关键函数 ${sym}() 建立接口契约测试`,
     hotspot_regression_risk: `对历史热点函数 ${sym}() 进行全面回归测试`,
+    deep_param_propagation: `验证参数 '${ev.entry_param || ''}' 从 ${ev.entry_function || '入口'}() 经 ${ev.max_depth || '多'} 层调用传播后的端到端行为`,
+    external_to_sensitive: `验证外部输入到敏感操作的路径安全性: ${ev.entry_function || sym}(${ev.entry_param || ''})`,
+    value_transform_risk: `验证参数经多次算术变换后不会溢出: ${ev.entry_function || sym}(${ev.entry_param || ''})`,
+    cross_function_resource_leak: `验证 ${sym}() 在调用 ${ev.callee_function || '子函数'}() 失败时正确释放已分配资源`,
+    cross_function_deadlock_risk: `验证跨函数调用链上的锁获取顺序不会导致 ABBA 死锁`,
+    cross_function_race: `验证调用链上的共享变量 '${ev.shared_symbol || ''}' 并发安全性`,
   }
   return mapping[rt] || `验证 ${sym}() 中与「${rt}」相关的行为是否符合预期`
 }
@@ -41,6 +75,59 @@ function getTestSteps(finding) {
   const ev = finding.evidence || {}
   const sym = finding.symbol_name || '目标函数'
   const rt = finding.risk_type || ''
+
+  // 端到端传播链测试步骤
+  if (ev.propagation_chain && ev.propagation_chain.length > 1) {
+    const chain = ev.propagation_chain
+    const entry = chain[0]
+    const steps = [
+      `1. 定位入口函数 ${entry.function}()，参数 '${entry.param}'`,
+      `2. 追踪完整调用链: ${_buildChainPath(chain)}`,
+    ]
+    const transforms = chain.filter(s => s.transform && s.transform !== 'none')
+    if (transforms.length) {
+      steps.push(`3. 分析调用链上的值变换: ${transforms.map(t => `${t.function}()中${t.transform}(${t.transform_expr || ''})`).join('、')}`)
+      steps.push(`4. 反向推导：计算什么样的入口值经过这些变换后恰好触发 ${sym}() 处的风险条件`)
+    } else {
+      steps.push(`3. 参数在调用链上直接传递（无变换），入口值即为终端值`)
+    }
+    if (ev.attack_scenario) {
+      steps.push(`${transforms.length ? 5 : 4}. 执行攻击场景: ${ev.attack_scenario}`)
+    }
+    steps.push(`${steps.length + 1}. 使用计算出的边界值从 ${entry.function}() 入口注入，验证整条调用链的端到端行为`)
+    if (ev.is_external_input) {
+      steps.push(`${steps.length + 1}. 特别注意：入口参数来自外部输入，需要测试畸形/恶意输入值`)
+    }
+    return steps
+  }
+
+  // 跨函数资源泄漏测试
+  if (rt === 'cross_function_resource_leak') {
+    const caller = ev.caller_function || sym
+    const callee = ev.callee_function || '子函数'
+    return [
+      `1. 在 ${caller}() 中定位资源分配点（${(ev.caller_resources || []).join('、')}）`,
+      `2. 使 ${callee}() 返回错误（注入失败条件）`,
+      `3. 检查 ${caller}() 在 ${callee}() 失败后是否释放了已分配资源`,
+      `4. 使用 Valgrind/AddressSanitizer 验证无内存泄漏`,
+      `5. 检查所有错误路径：${caller}() 的每个 return 前是否都有完整清理`,
+    ]
+  }
+
+  // 跨函数死锁测试
+  if (rt === 'cross_function_deadlock_risk') {
+    const chainA = ev.chain_a || {}
+    const chainB = ev.chain_b || {}
+    return [
+      `1. 识别两条冲突的锁获取路径:`,
+      `   路径A: ${chainA.path || '路径A'} 锁顺序 ${(chainA.locks || []).join(' → ')}`,
+      `   路径B: ${chainB.path || '路径B'} 锁顺序 ${(chainB.locks || []).join(' → ')}`,
+      `2. 编写多线程测试：线程1执行路径A，线程2执行路径B`,
+      `3. 使用高并发压力（>100次迭代）检测死锁`,
+      `4. 使用 ThreadSanitizer 检测 lock-order-inversion`,
+      `5. 确认全局锁获取顺序文档并修复顺序不一致`,
+    ]
+  }
 
   if (rt.includes('boundary') || rt === 'invalid_input_gap') {
     const candidates = ev.candidates || []
@@ -174,6 +261,12 @@ function getTestExpected(finding) {
     critical_path_uncovered: `关键路径从零覆盖提升到有效覆盖，基本功能被验证`,
     high_fan_out: `${sym}() 的接口变更或被调用者变更不破坏端到端功能`,
     deep_impact_surface: `${sym}() 的接口契约稳定，修改不影响所有 ${ev.fan_in || ''} 个调用者`,
+    deep_param_propagation: `参数从入口到终端的整条传播链行为正确，无溢出、越界或意外值域变换`,
+    external_to_sensitive: `外部输入在到达敏感操作前被充分验证，畸形输入被正确拒绝，无缓冲区溢出`,
+    value_transform_risk: `参数经过所有算术变换后值域正确，无整数溢出或精度丢失`,
+    cross_function_resource_leak: `${sym}() 在子函数失败时正确释放所有已分配资源，Valgrind 无泄漏报告`,
+    cross_function_deadlock_risk: `多线程压力测试下无死锁发生，锁获取顺序全局一致`,
+    cross_function_race: `跨函数访问共享变量 '${ev.shared_symbol || ''}' 时 ThreadSanitizer 无数据竞态报告`,
   }
   return mapping[rt] || `${sym}() 在所有测试场景下行为正确，无崩溃、泄漏或意外行为`
 }

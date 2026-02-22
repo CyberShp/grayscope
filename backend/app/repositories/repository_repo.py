@@ -18,6 +18,8 @@ def create(
     git_url: str,
     default_branch: str,
     local_mirror_path: str,
+    auth_type: str | None = None,
+    auth_secret_ref: str | None = None,
 ) -> Repository:
     obj = Repository(
         project_id=project_id,
@@ -25,8 +27,35 @@ def create(
         git_url=git_url,
         default_branch=default_branch,
         local_mirror_path=local_mirror_path,
+        auth_type=auth_type,
+        auth_secret_ref=auth_secret_ref,
     )
     db.add(obj)
+    db.commit()
+    db.refresh(obj)
+    return obj
+
+
+def update(
+    db: Session,
+    repo_id: int,
+    *,
+    git_url: str | None = None,
+    default_branch: str | None = None,
+    auth_type: str | None = None,
+    auth_secret_ref: str | None = None,
+) -> Repository | None:
+    obj = db.get(Repository, repo_id)
+    if obj is None:
+        return None
+    if git_url is not None:
+        obj.git_url = git_url
+    if default_branch is not None:
+        obj.default_branch = default_branch
+    if auth_type is not None:
+        obj.auth_type = auth_type
+    if auth_secret_ref is not None:
+        obj.auth_secret_ref = auth_secret_ref
     db.commit()
     db.refresh(obj)
     return obj

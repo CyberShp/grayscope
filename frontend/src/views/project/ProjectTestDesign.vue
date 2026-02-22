@@ -52,7 +52,7 @@
         <el-option v-for="m in moduleOptions" :key="m.id" :label="m.name" :value="m.id" />
       </el-select>
       <el-select v-model="filters.risk_type" placeholder="风险类型" clearable size="default" @change="loadData">
-        <el-option v-for="rt in riskTypeOptions" :key="rt" :label="rt" :value="rt" />
+        <el-option v-for="rt in riskTypeOptions" :key="rt.id" :label="rt.name" :value="rt.id" />
       </el-select>
       <el-button @click="resetFilters" :icon="RefreshRight">重置</el-button>
       <div class="gs-filter-spacer"></div>
@@ -173,6 +173,7 @@ import { Download, ArrowDown, Aim, List, Guide, CircleCheck, Document, RefreshRi
 import api from '../../api.js'
 import { useModuleNames } from '../../composables/useModuleNames.js'
 import { useRiskColor } from '../../composables/useRiskColor.js'
+import { getRiskTypeName, riskTypeOptions } from '../../composables/useRiskTypeNames.js'
 import EvidenceRenderer from '../../components/EvidenceRenderer.vue'
 import PriorityMatrix from '../../components/PriorityMatrix.vue'
 
@@ -194,15 +195,6 @@ const expandedId = ref(null)
 const filters = reactive({ priority: '', module_id: '', risk_type: '' })
 
 const moduleOptions = moduleList.map(m => ({ id: m.id, name: m.name }))
-const riskTypeOptions = [
-  'branch_missing_test', 'error_path', 'cleanup_path',
-  'boundary_miss', 'invalid_input_gap',
-  'missing_cleanup', 'inconsistent_errno_mapping', 'silent_error_swallow',
-  'high_fan_out', 'deep_impact_surface',
-  'race_write_without_lock', 'lock_order_inversion', 'atomicity_gap',
-  'changed_core_path', 'transitive_impact',
-  'high_risk_low_coverage', 'critical_path_uncovered',
-]
 
 function priorityClass(p) {
   const lvl = p.split('-')[0]

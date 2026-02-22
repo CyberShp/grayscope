@@ -225,6 +225,8 @@ def analyze(ctx: AnalyzeContext) -> ModuleResult:
                         "path_type": path_type,
                         "cfg_node_count": len(cfg.nodes),
                         "cfg_edge_count": len(cfg.edges),
+                        "expected_failure": {"error": "错误条件成立导致进入错误处理路径", "cleanup": "清理路径执行不完整", "boundary": "边界值导致错误分支", "state": "状态判断异常", "normal": "正常路径下功能不符合预期"}.get(path_type, "分支条件触发异常行为"),
+                        "unacceptable_outcomes": {"error": ["资源泄漏", "状态不一致", "崩溃"], "cleanup": ["资源泄漏", "重复释放"], "boundary": ["越界", "错误结果"], "state": ["状态机异常", "死循环"], "normal": ["功能回归"]}.get(path_type, ["崩溃", "不可恢复错误"]),
                     },
                 })
 
@@ -243,7 +245,11 @@ def analyze(ctx: AnalyzeContext) -> ModuleResult:
                     "symbol_name": sym.name,
                     "line_start": sym.line_start,
                     "line_end": sym.line_end,
-                    "evidence": {"pattern": "goto_cleanup"},
+                    "evidence": {
+                        "pattern": "goto_cleanup",
+                        "expected_failure": "清理路径执行不完整",
+                        "unacceptable_outcomes": ["资源泄漏", "重复释放"],
+                    },
                 })
 
     return _result(findings, warnings, total_functions, total_branches, len(files))

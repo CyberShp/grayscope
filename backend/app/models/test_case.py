@@ -39,6 +39,11 @@ class TestCase(Base):
     symbol_name: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     objective: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     expected: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    execution_hint: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    example_input: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    expected_failure: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    unacceptable_outcomes_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    related_functions_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),

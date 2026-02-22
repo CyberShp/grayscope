@@ -28,13 +28,17 @@ export default {
   getProjectMeasures: (projectId) => request('GET', `/projects/${projectId}/measures`),
   getProjectFindings: (projectId) => request('GET', `/projects/${projectId}/findings`),
   getProjectTasks: (projectId) => request('GET', `/projects/${projectId}/tasks`),
-  getProjectFileTree: (projectId) => request('GET', `/projects/${projectId}/file-tree`),
+  getProjectFileTree: (projectId, source) => {
+    const qs = source ? `?source=${encodeURIComponent(source)}` : ''
+    return request('GET', `/projects/${projectId}/file-tree${qs}`)
+  },
   getFileSource: (projectId, filePath) =>
     request('GET', `/projects/${projectId}/source?path=${encodeURIComponent(filePath)}`),
 
   // ── 仓库 ──────────────────────────────
   listRepos: (projectId) => request('GET', `/projects/${projectId}/repos`),
   createRepo: (projectId, body) => request('POST', `/projects/${projectId}/repos`, body),
+  updateRepo: (projectId, repoId, body) => request('PATCH', `/projects/${projectId}/repos/${repoId}`, body),
   syncRepo: (repoId, body = {}) => request('POST', `/repos/${repoId}/sync`, {
     revision: { branch: body.branch || 'main', tag: body.tag || null, commit: body.commit || null },
     depth: body.depth ?? 1,
@@ -86,6 +90,9 @@ export default {
     const qs = new URLSearchParams(params).toString()
     return request('GET', `/test-cases${qs ? '?' + qs : ''}`)
   },
+  getTestCase: (id) => request('GET', `/test-cases/${id}`),
+  updateTestCase: (id, body) => request('PATCH', `/test-cases/${id}`, body),
+  getTestCaseTemplate: () => request('GET', '/test-cases/template'),
   getFindingTestSuggestion: (findingId) =>
     request('GET', `/findings/${encodeURIComponent(findingId)}/test-suggestion`),
 }

@@ -19,7 +19,7 @@
         <div>
           <div style="font-size:12px;color:#909399;margin-bottom:4px">风险类型</div>
           <el-select v-model="riskType" placeholder="全部" clearable style="width:200px">
-            <el-option v-for="t in riskTypes" :key="t" :label="t" :value="t" />
+            <el-option v-for="t in riskTypeOptions" :key="t.id" :label="t.name" :value="t.id" />
           </el-select>
         </div>
         <el-button type="primary" @click="search" :loading="searching">
@@ -37,7 +37,7 @@
             <template #header>
               <div style="display:flex;justify-content:space-between;align-items:center">
                 <span style="font-weight:600;font-size:15px">{{ p.name }}</span>
-                <el-tag size="small">{{ p.risk_type }}</el-tag>
+                <el-tag size="small">{{ getRiskTypeName(p.risk_type) }}</el-tag>
               </div>
             </template>
             <div style="display:flex;gap:20px;margin-bottom:12px">
@@ -108,6 +108,7 @@
 
 <script>
 import api from '../api.js'
+import { getRiskTypeName, riskTypeOptions } from '../composables/useRiskTypeNames.js'
 
 export default {
   name: 'KnowledgeBase',
@@ -119,11 +120,7 @@ export default {
       patterns: [],
       searched: false,
       searching: false,
-      riskTypes: [
-        'error_path_not_tested', 'boundary_not_covered', 'concurrency_race',
-        'state_transition_gap', 'resource_lifecycle_leak', 'config_parameter_edge',
-        'protocol_message_malformed', 'upgrade_compatibility_miss', 'retry_logic_flaw',
-      ],
+      riskTypeOptions,
       matchTaskId: '',
       matchThreshold: 40,
       matches: [],
@@ -134,6 +131,7 @@ export default {
     await this.search()
   },
   methods: {
+    getRiskTypeName,
     async search() {
       this.searching = true
       try {

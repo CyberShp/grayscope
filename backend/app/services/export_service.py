@@ -44,6 +44,14 @@ def _findings_to_testcases(
         steps = _risk_type_to_steps(risk_type, f)
         expected = _risk_type_to_expected(risk_type, f)
 
+        execution_hint = _risk_type_to_execution_hint(risk_type, f)
+        example_input = _risk_type_to_example_input(risk_type, f)
+        related_functions = _get_related_functions(f)
+        expected_failure = _get_expected_failure(risk_type, f)
+        unacceptable_outcomes = _get_unacceptable_outcomes(risk_type, f)
+        if related_functions:
+            objective = _format_objective_with_related(objective, related_functions)
+        expected = _append_expected_vs_unacceptable(expected, expected_failure, unacceptable_outcomes)
         case = {
             "test_case_id": f"TC-{task_id[-8:]}-{tc_id:04d}",
             "source_finding_id": f.get("finding_id", ""),
@@ -56,6 +64,11 @@ def _findings_to_testcases(
             "preconditions": preconditions,
             "test_steps": steps,
             "expected_result": expected,
+            "execution_hint": execution_hint,
+            "example_input": example_input,
+            "related_functions": related_functions,
+            "expected_failure": expected_failure,
+            "unacceptable_outcomes": unacceptable_outcomes,
             "target_file": f.get("file_path", ""),
             "target_function": f.get("symbol_name", ""),
             "line_start": f.get("line_start", 0),
@@ -66,6 +79,103 @@ def _findings_to_testcases(
         cases.append(case)
 
     return cases
+
+
+def _get_related_functions(finding: dict) -> list[str]:
+    """从 evidence 提取关联函数列表（多函数交汇临界点）。优先显式字段，否则从调用链/数据流推导。"""
+    ev = finding.get("evidence", {})
+    related = ev.get("related_functions") or ev.get("interaction_chain") or ev.get("cross_function_chain")
+    if isinstance(related, list):
+        out = [str(x) for x in related if x]
+        if out:
+            return out
+    if isinstance(related, str):
+        out = [s.strip() for s in related.split(",") if s.strip()]
+        if out:
+            return out
+    sym = finding.get("symbol_name", "")
+    # 从 call_graph: callers + self + callees
+    callers = ev.get("callers") or []
+    callees = ev.get("callees") or []
+    if isinstance(callers, list) and isinstance(callees, list):
+        combined = list(dict.fromkeys([*callers[:3], sym, *callees[:3]]))
+        if len(combined) > 1:
+            return [x for x in combined if x]
+    # 从 data_flow propagation_chain
+    chain = ev.get("propagation_chain") or []
+    if isinstance(chain, list) and chain:
+        funcs = [s.get("function") for s in chain if isinstance(s, dict) and s.get("function")]
+        if len(funcs) > 1:
+            return funcs[:6]
+    return [sym] if sym else []
+
+
+def _get_expected_failure(risk_type: str, finding: dict) -> str:
+    """预期失败（灰盒：可接受的失败结果）。"""
+    ev = finding.get("evidence", {})
+    if ev.get("expected_failure"):
+        return str(ev["expected_failure"])
+    return _risk_type_to_expected_failure_default(risk_type, finding)
+
+
+def _get_unacceptable_outcomes(risk_type: str, finding: dict) -> list[str]:
+    """不可接受结果（灰盒：一旦出现即缺陷）。"""
+    ev = finding.get("evidence", {})
+    out = ev.get("unacceptable_outcomes")
+    if isinstance(out, list):
+        return [str(x) for x in out if x]
+    if isinstance(out, str):
+        return [s.strip() for s in out.split(";") if s.strip()]
+    return _risk_type_to_unacceptable_default(risk_type, finding)
+
+
+def _risk_type_to_expected_failure_default(risk_type: str, finding: dict) -> str:
+    sym = finding.get("symbol_name", "目标函数")
+    defaults = {
+        "missing_cleanup": "资源泄漏、句柄泄漏",
+        "branch_error": "错误分支未正确触发或未返回预期错误码",
+        "race_write_without_lock": "数据竞态、结果不确定",
+        "lock_order_inversion": "死锁、线程卡死",
+        "boundary_miss": "边界值未正确处理导致崩溃或错误结果",
+        "invalid_input_gap": "越界访问、崩溃",
+        "cross_function_resource_leak": "跨函数调用链上的资源泄漏",
+    }
+    return defaults.get(risk_type, f"{sym} 执行失败或返回错误码（预期内失败）")
+
+
+def _risk_type_to_unacceptable_default(risk_type: str, finding: dict) -> list[str]:
+    defaults = {
+        "missing_cleanup": ["进程崩溃", "控制器异常", "不可恢复状态"],
+        "race_write_without_lock": ["数据损坏", "崩溃", "死锁"],
+        "lock_order_inversion": ["死锁", "系统挂起"],
+        "boundary_miss": ["崩溃", "安全漏洞"],
+        "invalid_input_gap": ["崩溃", "越界写"],
+        "cross_function_resource_leak": ["进程崩溃", "资源耗尽"],
+    }
+    return defaults.get(risk_type, ["进程崩溃", "控制器下电", "不可恢复的错误状态"])
+
+
+def _format_objective_with_related(objective: str, related_functions: list[str]) -> str:
+    """在目标前加上关联函数，突出多函数交汇。"""
+    funcs = "、".join(related_functions[:5])
+    return f"关联函数: {funcs}。灰盒目标: 暴露多函数交汇临界点——{objective}"
+
+
+def _append_expected_vs_unacceptable(
+    expected: str | list,
+    expected_failure: str,
+    unacceptable_outcomes: list[str],
+) -> str | list:
+    """在预期结果后追加「预期失败」与「不可接受结果」，提升可读性。"""
+    base = expected if isinstance(expected, str) else "；".join(expected) if isinstance(expected, list) else ""
+    parts = [base] if base else []
+    if expected_failure:
+        parts.append(f"预期失败（可接受）: {expected_failure}")
+    if unacceptable_outcomes:
+        parts.append("不可接受结果: " + "；".join(unacceptable_outcomes))
+    if len(parts) <= 1 and base:
+        return expected
+    return "；".join(parts)
 
 
 def _risk_type_to_objective(risk_type: str, finding: dict) -> str:
@@ -172,6 +282,35 @@ def _risk_type_to_expected(risk_type: str, finding: dict) -> str:
     return mapping.get(risk_type, "函数行为正确且优雅地处理边界情况")
 
 
+def _risk_type_to_execution_hint(risk_type: str, finding: dict) -> str:
+    """灰盒：执行建议（在什么环境、用什么方式执行）。"""
+    sym = finding.get("symbol_name", "目标函数")
+    hints = {
+        "boundary_miss": f"在测试环境通过单元测试或 API 调用传入边界值，观察 {sym} 的返回与副作用。",
+        "invalid_input_gap": "使用畸形输入（越界索引、超长字符串）从接口或 CLI 触发，确认被拒绝或安全处理。",
+        "branch_error": "在测试环境中注入失败（如 malloc 失败），或构造触发错误分支的输入。",
+        "missing_cleanup": "启用内存/句柄检测工具，运行触发错误路径的用例，确认无泄漏。",
+        "race_write_without_lock": "多线程压力测试（可配合 TSan）在测试机执行。",
+        "lock_order_inversion": "并发执行涉及该锁的多个线程，观察是否出现死锁。",
+        "changed_core_path": "在测试环境运行该函数的现有用例及回归用例。",
+        "transitive_impact": "运行受影响模块的集成/回归测试。",
+    }
+    return hints.get(risk_type, f"在测试环境按上述步骤执行，重点验证 {sym} 的行为与预期一致。")
+
+
+def _risk_type_to_example_input(risk_type: str, finding: dict) -> str:
+    """灰盒：示例输入（便于新手构造测试数据）。"""
+    ev = finding.get("evidence", {})
+    candidates = ev.get("candidates", [])
+    if "boundary" in risk_type and candidates:
+        return f"边界候选值: {candidates[:5]}"
+    if risk_type == "invalid_input_gap":
+        return "示例: 索引 -1、len、len+1；或超长缓冲区。"
+    if "race" in risk_type or "lock" in risk_type:
+        return "示例: 多线程同时调用同一接口，或交替调用不同接口。"
+    return ""
+
+
 def export_json(db: Session, task_id: str) -> str:
     """导出任务发现为结构化 JSON 测试用例。"""
     task = task_repo.get_task_by_id(db, task_id)
@@ -227,19 +366,93 @@ def export_csv(db: Session, task_id: str) -> str:
         "test_case_id", "priority", "module_id", "module_display_name", "category",
         "title", "objective", "target_file", "target_function",
         "line_start", "line_end", "risk_score",
+        "related_functions", "expected_failure", "unacceptable_outcomes",
         "preconditions", "test_steps", "expected_result",
+        "execution_hint", "example_input",
     ]
     writer = csv.DictWriter(output, fieldnames=fieldnames, extrasaction="ignore")
     writer.writeheader()
 
     for c in cases:
         row = dict(c)
-        # 列表字段展平为文本
         row["preconditions"] = "; ".join(c.get("preconditions", []))
         row["test_steps"] = "; ".join(c.get("test_steps", []))
+        exp = c.get("expected_result")
+        row["expected_result"] = "; ".join(exp) if isinstance(exp, list) else (exp or "")
+        row["related_functions"] = "; ".join(c.get("related_functions", []))
+        row["expected_failure"] = c.get("expected_failure") or ""
+        row["unacceptable_outcomes"] = "; ".join(c.get("unacceptable_outcomes", []))
+        row["execution_hint"] = c.get("execution_hint") or ""
+        row["example_input"] = c.get("example_input") or ""
         writer.writerow(row)
 
     return output.getvalue()
+
+
+def export_markdown(db: Session, task_id: str) -> str:
+    """导出任务发现为可读的 Markdown 测试用例清单（含步骤、预期、如何执行）。"""
+    task = task_repo.get_task_by_id(db, task_id)
+    if task is None:
+        raise NotFoundError(f"任务 {task_id} 未找到")
+
+    results = task_repo.get_module_results(db, task.id)
+    all_findings: list[dict] = []
+    ai_data: dict[str, Any] = {}
+    for r in results:
+        if r.findings_json:
+            findings = json.loads(r.findings_json)
+            all_findings.extend(findings)
+        if r.ai_summary_json:
+            ai_data[r.module_id] = json.loads(r.ai_summary_json)
+
+    cases = _findings_to_testcases(task_id, all_findings, ai_data)
+    lines = [
+        "# GrayScope 灰盒测试用例",
+        "",
+        f"**任务** {task_id} | **项目** {task.project_id} | **用例数** {len(cases)}",
+        "",
+        "---",
+        "",
+    ]
+    for i, c in enumerate(cases, 1):
+        lines.append(f"## {i}. {c.get('title', '未命名')}")
+        lines.append("")
+        lines.append(f"- **优先级**: {c.get('priority', '')} | **风险类型**: {c.get('category', '')}")
+        lines.append(f"- **目标**: {c.get('objective', '')}")
+        if c.get("related_functions"):
+            lines.append(f"- **关联函数（交汇临界点）**: {', '.join(c['related_functions'])}")
+        if c.get("expected_failure"):
+            lines.append(f"- **预期失败（可接受）**: {c['expected_failure']}")
+        if c.get("unacceptable_outcomes"):
+            lines.append(f"- **不可接受结果**: {'；'.join(c['unacceptable_outcomes'])}")
+        lines.append("")
+        lines.append("### 前置条件")
+        for p in c.get("preconditions", []):
+            lines.append(f"- {p}")
+        lines.append("")
+        lines.append("### 测试步骤")
+        for s in c.get("test_steps", []):
+            lines.append(f"- {s}")
+        lines.append("")
+        lines.append("### 预期结果")
+        exp = c.get("expected_result")
+        if isinstance(exp, list):
+            for e in exp:
+                lines.append(f"- {e}")
+        else:
+            lines.append(str(exp or ""))
+        if c.get("execution_hint"):
+            lines.append("")
+            lines.append("### 如何执行")
+            lines.append(c["execution_hint"])
+        if c.get("example_input"):
+            lines.append("")
+            lines.append("### 示例数据")
+            lines.append(c["example_input"])
+        lines.append("")
+        lines.append("---")
+        lines.append("")
+    return "\n".join(lines)
 
 
 def export_findings_json(db: Session, task_id: str) -> str:

@@ -55,6 +55,13 @@ const routes = [
     meta: { title: '测试设计' },
   },
   {
+    path: '/test-design/:testCaseId',
+    name: 'TestCaseDetail',
+    component: () => import('./views/TestCaseDetail.vue'),
+    props: true,
+    meta: { title: '测试用例详情' },
+  },
+  {
     path: '/settings',
     name: 'Settings',
     component: () => import('./views/Settings.vue'),
