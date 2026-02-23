@@ -65,6 +65,12 @@ findings（含 risk_type、evidence、related_functions、expected_failure、una
 持久化 / 导出（JSON、CSV、Markdown）
 ```
 
+### 2.4 与业界灰盒方法的对应
+
+- **灰盒四合一定义**（Cleanscape/Coulter）：灰盒 = 黑盒 + 白盒 + 回归 + 变异。GrayScope 的静态分析提供「白盒」结构信息，导出用例支持「回归」与可复制步骤；若有覆盖率/执行反馈可进一步与「变异/预言质量」结合。
+- **十步法对应**：识别输入/输出 → 对应导出的 test_steps、expected_result、example_input；识别主要路径 → 对应 **critical_combinations** 与各分析器路径；按子功能设计并验证 → 对应按 finding/symbol 生成的用例；回归 → 导出说明「可复制加入回归套件」。
+- **静态引导动态**：导出的 **target_file、target_function、line_start** 及 **critical_combinations** 中的路径与函数列表，可作为下游**动态测试**、**Concolic 执行**或 **Fuzzer** 的目标与种子输入，实现「静态分析指明目标、动态/符号执行生成输入」的闭环。
+
 ---
 
 ## 三、GrayScope 实现原理概览

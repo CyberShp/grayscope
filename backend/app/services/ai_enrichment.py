@@ -365,9 +365,11 @@ def synthesize_cross_module(
         "\n\n请以 JSON 格式返回，且必须包含:\n"
         "1. **critical_combinations** (数组): 多函数交汇临界点。每项含:\n"
         "   - related_functions: [\"函数A\", \"函数B\", \"函数C\"] 交汇的 2～3 个函数或故障处理分支\n"
-        "   - expected_failure: 预期内可接受的失败（如「建联失败」）\n"
+        "   - expected_outcome: 预期结果（可成功或可接受失败）。例如「按规格成功完成」或「建联失败、返回错误码」\n"
+        "   - expected_failure: （可选）仅当预期为可接受失败时填写，如「建联失败」\n"
         "   - unacceptable_outcomes: [\"不可接受结果1\", \"不可接受结果2\"] 如「控制器下电」「进程崩溃」\n"
         "   - scenario_brief: 一句话场景描述\n"
+        "   - performance_requirement: （可选）性能/时序要求，如「响应时间 < 100ms」「IO 延迟 < 5ms」\n"
         "2. **cross_module_risks**: 跨模块风险关联\n"
         "3. **e2e_test_scenarios**: 端到端测试方案（含输入、路径、预期）\n"
         "4. **methodology_advice**: 灰盒测试改进建议\n\n"
@@ -425,10 +427,11 @@ def _extract_test_suggestions(ai_content: str) -> list[dict]:
                 out.append({
                     "type": "critical_combination",
                     "related_functions": item.get("related_functions", []),
+                    "expected_outcome": item.get("expected_outcome") or item.get("expected_failure", ""),
                     "expected_failure": item.get("expected_failure", ""),
                     "unacceptable_outcomes": item.get("unacceptable_outcomes", []),
                     "scenario_brief": item.get("scenario_brief", ""),
-                    **{k: v for k, v in item.items() if k not in ("related_functions", "expected_failure", "unacceptable_outcomes", "scenario_brief")},
+                    **{k: v for k, v in item.items() if k not in ("related_functions", "expected_outcome", "expected_failure", "unacceptable_outcomes", "scenario_brief")},
                 })
         _KNOWN_KEYS = ("e2e_test_scenarios", "test_suggestions", "tests",
                        "test_cases", "test_scenarios", "branches", "regression_tests")

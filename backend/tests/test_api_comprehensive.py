@@ -606,6 +606,24 @@ class TestTaskExport:
         res = client.get(f"/api/v1/analysis/tasks/{task['task_id']}/export?fmt=findings")
         assert res.status_code == 200
 
+    def test_062a_export_critical(self, client, create_task):
+        """Export only critical combinations (JSON)."""
+        _, _, task = create_task()
+        res = client.get(f"/api/v1/analysis/tasks/{task['task_id']}/export?fmt=critical")
+        assert res.status_code == 200
+        assert "application/json" in res.headers.get("content-type", "")
+        data = res.json()
+        assert "critical_combinations" in data
+        assert "export_format" in data
+
+    def test_062a2_export_html(self, client, create_task):
+        """Export single-page HTML report."""
+        _, _, task = create_task()
+        res = client.get(f"/api/v1/analysis/tasks/{task['task_id']}/export?fmt=html")
+        assert res.status_code == 200
+        assert "text/html" in res.headers.get("content-type", "")
+        assert b"GrayScope" in res.content or "GrayScope" in res.text
+
     def test_062b_coverage_import_summary(self, client, create_task):
         """北向接口：POST 写入 summary 格式覆盖率."""
         _, _, task = create_task()

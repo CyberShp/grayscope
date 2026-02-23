@@ -96,6 +96,7 @@ class TaskStatusOut(BaseModel):
     module_status: dict[str, str]
     created_at: datetime
     updated_at: datetime
+    error_json: Optional[str] = None  # 含 cross_module_ai 等扩展，供前端展示多函数交汇临界点
 
 
 class ModuleResultSummary(BaseModel):

@@ -20,11 +20,13 @@ app.api.v1.analysis.create_task()
             ├─► 每模块: _build_context() → analyzer.analyze(ctx) → AI 增强 → task_repo.update_module_result()
             └─► 跨模块 AI 综合 → 聚合风险分 → 更新任务状态
 
-GET /api/v1/analysis/tasks/{id}/export?fmt=json|csv|markdown
+GET /api/v1/analysis/tasks/{id}/export?fmt=json|csv|markdown|findings|critical|html
     │
     └─► export_service.export_*()
             │
-            └─► task_repo.get_module_results() → 合并 findings → _findings_to_testcases() → 返回/写文件
+            └─► task_repo.get_module_results() → 合并 findings + critical_combinations（来自 task.error_json）
+                 → _findings_to_testcases()（含 expected_outcome、performance_requirement、covered）
+                 → 返回/写文件
 ```
 
 ---
@@ -40,10 +42,12 @@ GET /api/v1/analysis/tasks/{id}/export?fmt=json|csv|markdown
   - 随后**同步**调用 `analysis_orchestrator.run_task(db, out.task_id)` 执行分析（当前无 Celery 等异步队列）。
 
 - **GET `/analysis/tasks/{task_id}/export?fmt=...`**  
-  - `fmt=json` → `export_service.export_json()`  
-  - `fmt=csv` → `export_service.export_csv()`  
+  - `fmt=json` → `export_service.export_json()`（含 critical_combinations、test_cases、covered）  
+  - `fmt=csv` → `export_service.export_csv()`（先交汇临界点再用例，含 performance_requirement、covered）  
   - `fmt=markdown` → `export_service.export_markdown()`  
   - `fmt=findings` → `export_service.export_findings_json()`  
+  - `fmt=critical` → `export_service.export_critical_only()`  
+  - `fmt=html` → `export_service.export_html()`  
 
 ### 2.2 任务与模块结果的持久化
 

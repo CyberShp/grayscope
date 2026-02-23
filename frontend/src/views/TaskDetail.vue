@@ -334,11 +334,20 @@
             <p>本次分析未启用 AI 增强，或 AI 模型不可用</p>
             <p style="font-size:12px;color:var(--gs-text-muted);">
               请在"设置 → AI 模型管理"中配置可用的 AI 模型（如 DeepSeek、Ollama 等），<br>
-              然后在新建分析时选择 AI 提供商和模型
+              然后在新建分析时选择 AI 提供商和模型；启用「跨模块 AI 综合」后，将在此展示<strong>多函数交汇临界点</strong>（灰盒核心：一次用例暴露不可接受结果）。
             </p>
           </div>
 
           <div v-else class="gs-ai-results">
+            <!-- 无跨模块结果时也展示「多函数交汇临界点」说明，便于用户理解灰盒核心 -->
+            <div v-if="!(crossModuleAi && crossModuleAi.success)" class="gs-ai-cross-module-card gs-critical-intersection">
+              <div class="gs-ai-section-title"><el-icon color="#8B5CF6"><Connection /></el-icon> 多函数交汇临界点</div>
+              <p class="gs-cc-what">
+                交汇 = 多个函数/分支在<strong>同一场景</strong>下同时参与（如：login 执行中 + 端口闪断/网卡下电处理被触发），不单指「同一变量」；包含执行路径、调用链、故障注入时机上的交汇。一次灰盒用例针对该交汇点即可暴露不可接受结果。
+              </p>
+              <p class="gs-cc-empty">需在<strong>新建分析时勾选「启用跨模块 AI 综合」</strong>并完成分析后，下方「跨模块综合分析」卡片会出现在此，并列出 AI 推断的交汇临界点。</p>
+            </div>
+
             <!-- 跨模块 AI 综合分析 -->
             <div v-if="crossModuleAi && crossModuleAi.success" class="gs-ai-cross-module-card">
               <div class="gs-ai-module-header">
@@ -347,6 +356,44 @@
                 <span v-if="crossModuleAi.provider" style="font-size:11px;color:var(--gs-text-muted);margin-left:auto;">
                   {{ crossModuleAi.provider }}/{{ crossModuleAi.model }}
                 </span>
+              </div>
+
+              <!-- 灰盒核心：多函数交汇临界点 — 一次用例即可暴露黑盒需 N 次才能撞出的不可接受结果 -->
+              <div class="gs-ai-cross-section gs-critical-intersection">
+                <div class="gs-ai-section-title">
+                  <el-icon color="#8B5CF6"><Connection /></el-icon>
+                  多函数交汇临界点
+                </div>
+                <p class="gs-cc-what">
+                  交汇 = 多个函数/分支在<strong>同一场景</strong>下同时参与（如：login 执行中 + 端口闪断处理被触发 + 网卡下电处理被触发），
+                  不是单指「同一个变量」；同一变量是并发分析里的共享变量竞态。这里指<strong>执行路径、调用链或故障注入时机</strong>上的交汇，
+                  一次灰盒用例针对该交汇点即可暴露不可接受结果，无需 N 次黑盒盲测。
+                </p>
+                <div v-if="criticalCombinations.length">
+                  <div v-for="(cc, i) in criticalCombinations" :key="'cc'+i" class="gs-ai-cross-item gs-critical-combo">
+                    <div class="gs-ai-cross-item-header">
+                      <strong>交汇点 {{ i + 1 }}</strong>
+                      <span v-if="cc.scenario_brief" class="gs-cc-brief">{{ cc.scenario_brief }}</span>
+                    </div>
+                    <div v-if="cc.related_functions && cc.related_functions.length" class="gs-cc-funcs">
+                      <span class="gs-cc-label">关联函数/分支：</span>
+                      <el-tag v-for="fn in cc.related_functions" :key="fn" size="small" type="primary" effect="plain" style="margin:2px;">{{ fn }}</el-tag>
+                    </div>
+                    <p v-if="(cc.expected_outcome || cc.expected_failure)" class="gs-cc-expected">
+                      <span class="gs-cc-label">预期结果（可成功或可接受失败）：</span>{{ cc.expected_outcome || cc.expected_failure }}
+                    </p>
+                    <p v-if="cc.unacceptable_outcomes && cc.unacceptable_outcomes.length" class="gs-cc-unacceptable">
+                      <span class="gs-cc-label">不可接受结果：</span>
+                      <el-tag v-for="(o, j) in cc.unacceptable_outcomes" :key="j" size="small" type="danger" effect="plain" style="margin:2px;">{{ o }}</el-tag>
+                    </p>
+                    <p v-if="cc.performance_requirement" class="gs-cc-perf">
+                      <span class="gs-cc-label">性能/时序要求：</span>{{ cc.performance_requirement }}
+                    </p>
+                  </div>
+                </div>
+                <p v-else class="gs-cc-empty">
+                  当前暂无 AI 识别的交汇临界点。请确保新建分析时<strong>启用了「跨模块 AI 综合」</strong>且分析已成功完成，AI 会从调用图+错误路径+数据流中推断多函数交汇场景并填入此处。
+                </p>
               </div>
 
               <div v-if="crossModuleAi.cross_module_risks && crossModuleAi.cross_module_risks.length" class="gs-ai-cross-section">
@@ -448,22 +495,33 @@
         <!-- 导出 -->
         <el-tab-pane label="导出" name="export">
           <div style="padding: 48px; text-align: center;">
-            <p style="color: var(--gs-text-muted); margin-bottom: 24px;">选择导出格式下载分析结果</p>
-            <div style="display: flex; gap: 16px; justify-content: center;">
+            <p style="color: var(--gs-text-muted); margin-bottom: 8px;">导出文件均含多函数交汇临界点与按发现生成的用例；步骤与预期可复制加入回归套件。</p>
+            <p style="color: var(--gs-text-muted); margin-bottom: 24px;">选择格式下载或打开报告</p>
+            <div style="display: flex; flex-wrap: wrap; gap: 16px; justify-content: center;">
               <div class="gs-export-card" @click="doExport('json')">
                 <el-icon :size="32" color="#4B9FD5"><Document /></el-icon>
                 <div class="gs-export-label">JSON 测试用例</div>
-                <div class="gs-export-desc">结构化测试用例建议</div>
+                <div class="gs-export-desc">结构化用例 + 交汇临界点</div>
               </div>
               <div class="gs-export-card" @click="doExport('csv')">
                 <el-icon :size="32" color="#00AA00"><Grid /></el-icon>
                 <div class="gs-export-label">CSV 表格</div>
-                <div class="gs-export-desc">可导入测试管理工具</div>
+                <div class="gs-export-desc">先交汇点再用例，可导入测试管理</div>
               </div>
               <div class="gs-export-card" @click="doExport('markdown')">
                 <el-icon :size="32" color="#7C3AED"><Document /></el-icon>
                 <div class="gs-export-label">Markdown 清单</div>
-                <div class="gs-export-desc">含步骤、预期、如何执行，便于新手对照</div>
+                <div class="gs-export-desc">含步骤、预期、如何执行</div>
+              </div>
+              <div class="gs-export-card" @click="doExport('critical')">
+                <el-icon :size="32" color="#D4333F"><Connection /></el-icon>
+                <div class="gs-export-label">仅交汇临界点</div>
+                <div class="gs-export-desc">JSON，快速粘贴到测试系统</div>
+              </div>
+              <div class="gs-export-card" @click="doExport('html')">
+                <el-icon :size="32" color="#0ea5e9"><Document /></el-icon>
+                <div class="gs-export-label">HTML 报告</div>
+                <div class="gs-export-desc">单页汇总，分享或归档</div>
               </div>
               <div class="gs-export-card" @click="doExport('findings')">
                 <el-icon :size="32" color="#EAB308"><DataLine /></el-icon>
@@ -549,6 +607,11 @@ export default {
     },
     zeroCoverageCount() {
       return this.coverageFindings.filter(f => (f.line_coverage || 0) === 0).length
+    },
+    /** 灰盒核心：多函数交汇临界点（来自跨模块 AI 的 critical_combinations），一次用例即可暴露不可接受结果 */
+    criticalCombinations() {
+      const list = this.crossModuleAi?.test_suggestions || []
+      return list.filter(s => s && (s.type === 'critical_combination' || (s.related_functions && s.related_functions.length)))
     },
     aiEnabled() {
       return Object.keys(this.aiSummaries).length > 0
@@ -952,4 +1015,13 @@ export default {
 .gs-ai-cross-risk { border-left: 3px solid #D50000; }
 .gs-ai-cross-hidden { border-left: 3px solid #E57F00; }
 .gs-ai-cross-scenario { border-left: 3px solid #4B9FD5; }
+.gs-critical-intersection { border: 1px solid rgba(139, 92, 246, 0.25); border-radius: 8px; padding: 12px; background: rgba(139, 92, 246, 0.04); }
+.gs-ai-section-title .gs-ai-section-hint { font-size: 11px; font-weight: normal; color: var(--gs-text-muted); margin-left: 8px; }
+.gs-critical-combo { border-left: 3px solid #8B5CF6; }
+.gs-cc-funcs, .gs-cc-expected, .gs-cc-unacceptable { margin: 6px 0 0; font-size: 12px; }
+.gs-cc-label { font-weight: 600; color: var(--gs-text-secondary); margin-right: 6px; }
+.gs-cc-brief { font-size: 12px; color: var(--gs-text-muted); margin-left: 8px; font-weight: normal; }
+.gs-cc-what { margin: 0 0 12px; font-size: 12px; color: var(--gs-text-secondary); line-height: 1.7; }
+.gs-cc-what strong { color: var(--gs-text-primary); }
+.gs-cc-empty { margin: 8px 0 0; font-size: 12px; color: var(--gs-text-muted); line-height: 1.6; }
 </style>

@@ -42,16 +42,21 @@ def get_results(task_id: str, db: Session = Depends(get_db)) -> dict:
 @router.get("/analysis/tasks/{task_id}/export")
 def export_task(
     task_id: str,
-    fmt: str = Query("json", pattern="^(json|csv|markdown|findings)$"),
+    fmt: str = Query(
+        "json",
+        pattern="^(json|csv|markdown|findings|critical|html)$",
+    ),
     db: Session = Depends(get_db),
 ):
     """导出分析结果为结构化测试用例。
 
     格式选项：
-    - json：结构化测试用例建议（JSON）
-    - csv：测试用例表（CSV，可导入测试管理工具）
+    - json：结构化测试用例建议（含多函数交汇临界点 + 用例）
+    - csv：测试用例表（先交汇临界点再用例，可导入测试管理工具）
     - markdown：灰盒测试用例清单（含步骤、预期、如何执行）
     - findings：原始发现及 AI 增强数据（JSON）
+    - critical：仅多函数交汇临界点（JSON，便于快速粘贴）
+    - html：单页 HTML 报告（便于分享与归档）
     """
     if fmt == "csv":
         content = export_service.export_csv(db, task_id)
@@ -78,6 +83,24 @@ def export_task(
             media_type="application/json",
             headers={
                 "Content-Disposition": f'attachment; filename="grayscope_{task_id}_findings.json"'
+            },
+        )
+    elif fmt == "critical":
+        content = export_service.export_critical_only(db, task_id)
+        return PlainTextResponse(
+            content,
+            media_type="application/json",
+            headers={
+                "Content-Disposition": f'attachment; filename="grayscope_{task_id}_critical.json"'
+            },
+        )
+    elif fmt == "html":
+        content = export_service.export_html(db, task_id)
+        return PlainTextResponse(
+            content,
+            media_type="text/html",
+            headers={
+                "Content-Disposition": f'inline; filename="grayscope_{task_id}_report.html"'
             },
         )
     else:

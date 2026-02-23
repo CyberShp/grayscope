@@ -20,6 +20,87 @@ from app.repositories import task_repo
 
 logger = logging.getLogger(__name__)
 
+
+def _get_covered_set(db: Session, task_primary_id: int) -> set[tuple[str, str]]:
+    """从任务最近一次覆盖率导入中得到 (file_path, function_name) 已覆盖集合。"""
+    from app.repositories.coverage_import_repo import get_latest_payload_by_task_id
+
+    out: set[tuple[str, str]] = set()
+    result = get_latest_payload_by_task_id(db, task_primary_id)
+    if not result:
+        return out
+    payload, fmt = result
+    if fmt == "summary":
+        for path, data in (payload.get("files") or {}).items():
+            funcs = data.get("functions") or {}
+            for fn, hit in funcs.items():
+                if hit:
+                    out.add((path, fn))
+    return out
+
+
+def _get_cross_module_critical_combinations(task) -> list[dict]:
+    """从任务的 error_json 扩展中读取跨模块 AI 产出的多函数交汇临界点。"""
+    if not task or not task.error_json:
+        return []
+    try:
+        data = json.loads(task.error_json)
+        cross = data.get("cross_module_ai") or {}
+        suggestions = cross.get("test_suggestions") or []
+    except (json.JSONDecodeError, TypeError):
+        return []
+    out = []
+    for s in suggestions:
+        if not isinstance(s, dict):
+            continue
+        if s.get("type") == "critical_combination" or (
+            (s.get("related_functions") or s.get("scenario_brief"))
+        ):
+            out.append(s)
+    return out
+
+
+def _critical_combination_to_export_item(
+    cc: dict, index: int, task_id: str
+) -> dict:
+    """将一条 critical_combination 转为导出结构，含建议步骤与 fault_window。"""
+    related = cc.get("related_functions") or []
+    scenario = cc.get("scenario_brief") or ""
+    expected_outcome = (
+        cc.get("expected_outcome")
+        or cc.get("expected_failure")
+        or "按规格成功完成或可接受失败"
+    )
+    unacceptable = cc.get("unacceptable_outcomes") or []
+    if isinstance(unacceptable, str):
+        unacceptable = [s.strip() for s in unacceptable.split(";") if s.strip()]
+
+    # 建议步骤：从关联函数与场景生成
+    steps = []
+    if related:
+        steps.append(f"1. 构造同时涉及以下函数/分支的执行场景: {', '.join(related[:5])}")
+    if scenario:
+        steps.append(f"2. 场景要点: {scenario}")
+    steps.append("3. 按上述场景执行（可结合故障注入或边界输入）")
+    steps.append("4. 验证出现预期结果且未出现不可接受结果")
+
+    fault_window = {
+        "after": "进入上述关联函数交汇的执行路径",
+        "before": "相关调用链/分支执行完毕",
+        "method": "在交汇点注入故障或构造边界输入，观察预期结果与不可接受结果",
+    }
+
+    return {
+        "id": f"CC-{task_id[-8:]}-{index:04d}",
+        "related_functions": related,
+        "expected_outcome": expected_outcome,
+        "unacceptable_outcomes": unacceptable,
+        "scenario_brief": scenario,
+        "suggested_steps": steps,
+        "fault_window": fault_window,
+        "performance_requirement": cc.get("performance_requirement") or "",
+    }
+
 # 严重程度 → 优先级映射
 _SEV_PRIORITY = {"S0": "P0-紧急", "S1": "P1-高", "S2": "P2-中", "S3": "P3-低"}
 
@@ -50,6 +131,13 @@ def _findings_to_testcases(
         related_functions = _get_related_functions(f)
         expected_failure = _get_expected_failure(risk_type, f)
         unacceptable_outcomes = _get_unacceptable_outcomes(risk_type, f)
+        performance_requirement = _get_performance_requirement(f)
+        ev = f.get("evidence", {})
+        expected_outcome = (
+            ev.get("expected_outcome")
+            or expected_failure
+            or "按规格成功完成或可接受失败"
+        )
         if related_functions:
             objective = _format_objective_with_related(objective, related_functions)
         expected = _append_expected_vs_unacceptable(expected, expected_failure, unacceptable_outcomes)
@@ -69,8 +157,10 @@ def _findings_to_testcases(
             "example_input": example_input,
             "fault_window": fault_window,
             "related_functions": related_functions,
+            "expected_outcome": expected_outcome,
             "expected_failure": expected_failure,
             "unacceptable_outcomes": unacceptable_outcomes,
+            "performance_requirement": performance_requirement,
             "target_file": f.get("file_path", ""),
             "target_function": f.get("symbol_name", ""),
             "line_start": f.get("line_start", 0),
@@ -80,6 +170,13 @@ def _findings_to_testcases(
         }
         cases.append(case)
 
+    # 按风险分降序、再按关联函数数量降序（高价值优先）
+    cases.sort(
+        key=lambda c: (
+            -float(c.get("risk_score") or 0),
+            -len(c.get("related_functions") or []),
+        )
+    )
     return cases
 
 
@@ -118,6 +215,12 @@ def _get_expected_failure(risk_type: str, finding: dict) -> str:
     if ev.get("expected_failure"):
         return str(ev["expected_failure"])
     return _risk_type_to_expected_failure_default(risk_type, finding)
+
+
+def _get_performance_requirement(finding: dict) -> str:
+    """可选：性能/时序要求（如 响应时间 < 100ms），供存储/实时场景填写。"""
+    ev = finding.get("evidence", {})
+    return str(ev.get("performance_requirement", "") or "").strip()
 
 
 def _get_unacceptable_outcomes(risk_type: str, finding: dict) -> list[str]:
@@ -350,7 +453,7 @@ def _risk_type_to_fault_window(risk_type: str, finding: dict) -> dict | None:
 
 
 def export_json(db: Session, task_id: str) -> str:
-    """导出任务发现为结构化 JSON 测试用例。"""
+    """导出任务发现为结构化 JSON 测试用例；含多函数交汇临界点区块。"""
     task = task_repo.get_task_by_id(db, task_id)
     if task is None:
         raise NotFoundError(f"任务 {task_id} 未找到")
@@ -367,6 +470,15 @@ def export_json(db: Session, task_id: str) -> str:
             ai_data[r.module_id] = json.loads(r.ai_summary_json)
 
     cases = _findings_to_testcases(task_id, all_findings, ai_data)
+    critical_list = _get_cross_module_critical_combinations(task)
+    critical_export = [
+        _critical_combination_to_export_item(cc, i, task_id)
+        for i, cc in enumerate(critical_list, 1)
+    ]
+
+    covered_set = _get_covered_set(db, task.id)
+    for c in cases:
+        c["covered"] = (c.get("target_file") or "", c.get("target_function") or "") in covered_set
 
     export = {
         "export_format": "grayscope_testcases_v1",
@@ -374,14 +486,16 @@ def export_json(db: Session, task_id: str) -> str:
         "project_id": task.project_id,
         "exported_at": datetime.now(timezone.utc).isoformat(),
         "total_test_cases": len(cases),
+        "critical_combinations_count": len(critical_export),
         "aggregate_risk_score": task.aggregate_risk_score,
+        "critical_combinations": critical_export,
         "test_cases": cases,
     }
     return json.dumps(export, indent=2, ensure_ascii=False)
 
 
 def export_csv(db: Session, task_id: str) -> str:
-    """导出任务发现为 CSV 测试用例表。"""
+    """导出任务发现为 CSV 测试用例表；先多函数交汇临界点，再按发现生成的用例。"""
     task = task_repo.get_task_by_id(db, task_id)
     if task is None:
         raise NotFoundError(f"任务 {task_id} 未找到")
@@ -398,37 +512,81 @@ def export_csv(db: Session, task_id: str) -> str:
             ai_data[r.module_id] = json.loads(r.ai_summary_json)
 
     cases = _findings_to_testcases(task_id, all_findings, ai_data)
+    critical_list = _get_cross_module_critical_combinations(task)
+    critical_export = [
+        _critical_combination_to_export_item(cc, i, task_id)
+        for i, cc in enumerate(critical_list, 1)
+    ]
+    covered_set = _get_covered_set(db, task.id)
+    for c in cases:
+        c["covered"] = (c.get("target_file") or "", c.get("target_function") or "") in covered_set
 
     output = io.StringIO()
     fieldnames = [
-        "test_case_id", "priority", "module_id", "module_display_name", "category",
+        "source", "test_case_id", "priority", "module_id", "module_display_name", "category",
         "title", "objective", "target_file", "target_function",
-        "line_start", "line_end", "risk_score",
-        "related_functions", "expected_failure", "unacceptable_outcomes",
+        "line_start", "line_end", "risk_score", "covered",
+        "related_functions", "expected_outcome", "expected_failure", "unacceptable_outcomes",
+        "performance_requirement",
         "preconditions", "test_steps", "expected_result",
-        "execution_hint", "example_input",
+        "execution_hint", "example_input", "scenario_brief",
     ]
     writer = csv.DictWriter(output, fieldnames=fieldnames, extrasaction="ignore")
     writer.writeheader()
 
+    for c in critical_export:
+        row = {
+            "source": "critical_combination",
+            "test_case_id": c.get("id", ""),
+            "priority": "",
+            "module_id": "",
+            "module_display_name": "",
+            "category": "",
+            "title": c.get("scenario_brief", "多函数交汇临界点"),
+            "objective": "验证多函数交汇时的预期结果且不出现不可接受结果",
+            "target_file": "",
+            "target_function": "",
+            "line_start": "",
+            "line_end": "",
+            "risk_score": "",
+            "related_functions": "; ".join(c.get("related_functions", [])),
+            "expected_outcome": c.get("expected_outcome", ""),
+            "expected_failure": "",
+            "unacceptable_outcomes": "; ".join(c.get("unacceptable_outcomes", [])),
+            "performance_requirement": c.get("performance_requirement", "") or "",
+            "preconditions": "",
+            "test_steps": "; ".join(c.get("suggested_steps", [])),
+            "expected_result": "",
+            "execution_hint": str(c.get("fault_window", "")),
+            "example_input": "",
+            "scenario_brief": c.get("scenario_brief", ""),
+            "covered": "",
+        }
+        writer.writerow(row)
+
     for c in cases:
         row = dict(c)
+        row["source"] = "finding"
+        row["covered"] = "是" if c.get("covered") else "否"
         row["preconditions"] = "; ".join(c.get("preconditions", []))
         row["test_steps"] = "; ".join(c.get("test_steps", []))
         exp = c.get("expected_result")
         row["expected_result"] = "; ".join(exp) if isinstance(exp, list) else (exp or "")
         row["related_functions"] = "; ".join(c.get("related_functions", []))
+        row["expected_outcome"] = c.get("expected_outcome") or ""
         row["expected_failure"] = c.get("expected_failure") or ""
         row["unacceptable_outcomes"] = "; ".join(c.get("unacceptable_outcomes", []))
         row["execution_hint"] = c.get("execution_hint") or ""
         row["example_input"] = c.get("example_input") or ""
+        row["scenario_brief"] = ""
+        row["performance_requirement"] = c.get("performance_requirement") or ""
         writer.writerow(row)
 
     return output.getvalue()
 
 
 def export_markdown(db: Session, task_id: str) -> str:
-    """导出任务发现为可读的 Markdown 测试用例清单（含步骤、预期、如何执行）。"""
+    """导出任务发现为可读的 Markdown 测试用例清单；先多函数交汇临界点，再按发现生成的用例。"""
     task = task_repo.get_task_by_id(db, task_id)
     if task is None:
         raise NotFoundError(f"任务 {task_id} 未找到")
@@ -444,14 +602,55 @@ def export_markdown(db: Session, task_id: str) -> str:
             ai_data[r.module_id] = json.loads(r.ai_summary_json)
 
     cases = _findings_to_testcases(task_id, all_findings, ai_data)
+    critical_list = _get_cross_module_critical_combinations(task)
+    critical_export = [
+        _critical_combination_to_export_item(cc, i, task_id)
+        for i, cc in enumerate(critical_list, 1)
+    ]
+
     lines = [
         "# GrayScope 灰盒测试用例",
         "",
-        f"**任务** {task_id} | **项目** {task.project_id} | **用例数** {len(cases)}",
+        f"**任务** {task_id} | **项目** {task.project_id} | **用例数** {len(cases)} | **交汇临界点** {len(critical_export)}",
+        "",
+        "以下步骤与预期可直接复制加入回归套件。",
         "",
         "---",
         "",
     ]
+
+    if critical_export:
+        lines.append("## 多函数交汇临界点")
+        lines.append("")
+        for i, c in enumerate(critical_export, 1):
+            lines.append(f"### 交汇点 {i}")
+            lines.append("")
+            if c.get("related_functions"):
+                lines.append(f"- **关联函数**: {', '.join(c['related_functions'])}")
+            lines.append(f"- **预期结果（可成功或可接受失败）**: {c.get('expected_outcome', '')}")
+            if c.get("unacceptable_outcomes"):
+                lines.append(f"- **不可接受结果**: {'；'.join(c['unacceptable_outcomes'])}")
+            if c.get("scenario_brief"):
+                lines.append(f"- **场景**: {c['scenario_brief']}")
+            if c.get("performance_requirement"):
+                lines.append(f"- **性能/时序要求**: {c['performance_requirement']}")
+            lines.append("")
+            lines.append("#### 建议步骤")
+            for s in c.get("suggested_steps", []):
+                lines.append(f"- {s}")
+            fw = c.get("fault_window", {})
+            if fw:
+                lines.append("")
+                lines.append("#### 故障注入窗口")
+                lines.append(f"- 时机 after: {fw.get('after', '')}")
+                lines.append(f"- 时机 before: {fw.get('before', '')}")
+                lines.append(f"- 方式: {fw.get('method', '')}")
+            lines.append("")
+            lines.append("---")
+            lines.append("")
+        lines.append("## 按发现生成的测试用例")
+        lines.append("")
+
     for i, c in enumerate(cases, 1):
         lines.append(f"## {i}. {c.get('title', '未命名')}")
         lines.append("")
@@ -459,10 +658,13 @@ def export_markdown(db: Session, task_id: str) -> str:
         lines.append(f"- **目标**: {c.get('objective', '')}")
         if c.get("related_functions"):
             lines.append(f"- **关联函数（交汇临界点）**: {', '.join(c['related_functions'])}")
+        lines.append(f"- **预期结果（可成功或可接受失败）**: {c.get('expected_outcome', '')}")
         if c.get("expected_failure"):
             lines.append(f"- **预期失败（可接受）**: {c['expected_failure']}")
         if c.get("unacceptable_outcomes"):
             lines.append(f"- **不可接受结果**: {'；'.join(c['unacceptable_outcomes'])}")
+        if c.get("performance_requirement"):
+            lines.append(f"- **性能/时序要求**: {c['performance_requirement']}")
         lines.append("")
         lines.append("### 前置条件")
         for p in c.get("preconditions", []):
@@ -491,6 +693,98 @@ def export_markdown(db: Session, task_id: str) -> str:
         lines.append("---")
         lines.append("")
     return "\n".join(lines)
+
+
+def export_critical_only(db: Session, task_id: str) -> str:
+    """仅导出多函数交汇临界点（JSON），便于快速粘贴到测试管理系统。"""
+    task = task_repo.get_task_by_id(db, task_id)
+    if task is None:
+        raise NotFoundError(f"任务 {task_id} 未找到")
+    critical_list = _get_cross_module_critical_combinations(task)
+    critical_export = [
+        _critical_combination_to_export_item(cc, i, task_id)
+        for i, cc in enumerate(critical_list, 1)
+    ]
+    out = {
+        "export_format": "grayscope_critical_combinations_v1",
+        "task_id": task_id,
+        "project_id": task.project_id,
+        "exported_at": datetime.now(timezone.utc).isoformat(),
+        "count": len(critical_export),
+        "critical_combinations": critical_export,
+    }
+    return json.dumps(out, indent=2, ensure_ascii=False)
+
+
+def export_html(db: Session, task_id: str) -> str:
+    """导出单页 HTML 报告：汇总、多函数交汇临界点、发现数，便于分享与归档。"""
+    task = task_repo.get_task_by_id(db, task_id)
+    if task is None:
+        raise NotFoundError(f"任务 {task_id} 未找到")
+    results = task_repo.get_module_results(db, task.id)
+    all_findings: list[dict] = []
+    for r in results:
+        if r.findings_json:
+            try:
+                all_findings.extend(json.loads(r.findings_json))
+            except (json.JSONDecodeError, TypeError):
+                pass
+    critical_list = _get_cross_module_critical_combinations(task)
+    critical_export = [
+        _critical_combination_to_export_item(cc, i, task_id)
+        for i, cc in enumerate(critical_list, 1)
+    ]
+    modules_ok = sum(1 for r in results if r.status == "success")
+    modules_total = len(results)
+
+    html_parts = [
+        "<!DOCTYPE html><html lang='zh-CN'><head><meta charset='UTF-8'><meta name='viewport' content='width=device-width,initial-scale=1'>",
+        "<title>GrayScope 报告 - " + _escape(task_id) + "</title>",
+        "<style>",
+        "body{font-family:system-ui,sans-serif;margin:1rem 2rem;background:#fafafa;}",
+        "h1{color:#333;} .meta{color:#666;font-size:0.9rem;}",
+        ".card{background:#fff;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,0.08);padding:1rem;margin:1rem 0;}",
+        ".cc-item{border-left:4px solid #4B9FD5;padding:0.5rem 0 0.5rem 0.75rem;margin:0.5rem 0;}",
+        "ul{margin:0.25rem 0;} .tag{display:inline-block;background:#e3f2fd;padding:2px 6px;border-radius:4px;margin:2px;font-size:0.85rem;}",
+        "</style></head><body>",
+        "<h1>GrayScope 灰盒测试报告</h1>",
+        f"<p class='meta'>任务 {_escape(task_id)} | 项目 {task.project_id} | "
+        f"模块 {modules_ok}/{modules_total} 成功 | 发现 {len(all_findings)} 条 | 交汇临界点 {len(critical_export)}</p>",
+        f"<p class='meta'>聚合风险分: {task.aggregate_risk_score or '-'}</p>",
+        "<div class='card'><h2>多函数交汇临界点</h2>",
+    ]
+    if critical_export:
+        for i, c in enumerate(critical_export, 1):
+            funcs = ", ".join(c.get("related_functions", []))
+            outcome = _escape(c.get("expected_outcome", ""))
+            unacc = "；".join(c.get("unacceptable_outcomes", []))
+            brief = _escape(c.get("scenario_brief", ""))
+            perf = _escape(c.get("performance_requirement", "") or "")
+            html_parts.append(
+                f"<div class='cc-item'>"
+                f"<strong>交汇点 {i}</strong>"
+                f" {(' — ' + brief) if brief else ''}<br>"
+                f"<span class='tag'>关联函数: {_escape(funcs)}</span><br>"
+                f"预期结果: {outcome} | 不可接受: {_escape(unacc)}"
+                f"{(' | 性能/时序: ' + perf) if perf else ''}"
+                f"</div>"
+            )
+    else:
+        html_parts.append("<p>暂无 AI 识别的多函数交汇临界点（需启用跨模块 AI 综合并完成分析）。</p>")
+    html_parts.append("</div></body></html>")
+    return "\n".join(html_parts)
+
+
+def _escape(s: str) -> str:
+    if not s:
+        return ""
+    return (
+        str(s)
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+    )
 
 
 def export_findings_json(db: Session, task_id: str) -> str:

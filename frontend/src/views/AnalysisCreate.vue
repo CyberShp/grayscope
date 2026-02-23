@@ -70,6 +70,14 @@
             </el-form-item>
           </template>
 
+          <el-divider>灰盒核心诉求</el-divider>
+          <el-form-item label="多函数交汇临界点">
+            <el-switch v-model="form.options.enable_cross_module_ai" active-text="启用" inactive-text="关闭" />
+            <div style="color:#909399;font-size:12px;margin-top:6px;line-height:1.6">
+              精准找到多个函数/分支在同一场景下的交汇点，<strong>一次</strong>灰盒用例即可暴露「不可接受结果」（如控制器下电、进程崩溃），无需 N 次黑盒盲测。启用后分析完成将执行跨模块 AI 综合并产出交汇临界点建议。
+            </div>
+          </el-form-item>
+
           <el-divider>AI 增强配置</el-divider>
           <el-form-item label="AI 提供者">
             <el-select v-model="form.ai.provider" placeholder="选择 AI 提供商" style="width:100%;" @change="onProviderChange">
@@ -102,10 +110,6 @@
             <el-switch v-model="form.options.enable_data_flow" active-text="启用" inactive-text="关闭" />
             <div style="color:#909399;font-size:12px;margin-top:2px">跨函数参数传播 & 污点追踪（依赖调用图）</div>
           </el-form-item>
-          <el-form-item label="跨模块AI综合">
-            <el-switch v-model="form.options.enable_cross_module_ai" active-text="启用" inactive-text="关闭" />
-            <div style="color:#909399;font-size:12px;margin-top:2px">分析完成后执行全局风险综合 & 端到端测试建议</div>
-          </el-form-item>
         </el-form>
         <div style="text-align:center;margin-top:20px">
           <el-button @click="step = 0">上一步</el-button>
@@ -123,6 +127,7 @@
           <el-descriptions-item label="分析器模块" :span="2">
             <el-tag v-for="m in form.analyzers" :key="m" size="small" style="margin:2px">{{ getDisplayName(m) }}</el-tag>
           </el-descriptions-item>
+          <el-descriptions-item label="多函数交汇临界点">{{ form.options.enable_cross_module_ai ? '启用' : '关闭' }}</el-descriptions-item>
           <el-descriptions-item label="AI 提供者">{{ form.ai.provider }}</el-descriptions-item>
           <el-descriptions-item label="AI 模型">{{ form.ai.model }}</el-descriptions-item>
         </el-descriptions>

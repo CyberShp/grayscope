@@ -3,6 +3,8 @@
 **日期**: 2026-02-23  
 **版本**: v1.1.0 — 灰盒增强 + UI 中文化 + 全分析器灰盒字段  
 
+> **后续迭代**：导出多函数交汇临界点（critical_combinations）、fmt=critical/html、expected_outcome、performance_requirement、覆盖率 covered 标记等，见 [GRAYBOX_RESEARCH_AND_ITERATION.md](GRAYBOX_RESEARCH_AND_ITERATION.md)。
+
 ---
 
 ## 1. 测试概要

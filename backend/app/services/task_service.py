@@ -111,6 +111,7 @@ def get_task_status(db: Session, task_id: str) -> TaskStatusOut:
         module_status=module_status,
         created_at=task.created_at,
         updated_at=task.updated_at,
+        error_json=task.error_json,
     )
 
 

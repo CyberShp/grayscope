@@ -361,15 +361,18 @@
 
 **查询参数：**
 
-- `fmt`：`json` \| `csv` \| `findings`（必填或默认 `json`）
+- `fmt`：`json` \| `csv` \| `markdown` \| `findings` \| `critical` \| `html`（默认 `json`）
 
 **说明：**
 
-- `fmt=json`：结构化测试用例建议，`Content-Type: application/json`，附件下载
-- `fmt=csv`：测试用例表（CSV），可导入测试管理工具，`Content-Type: text/csv`
+- `fmt=json`：结构化测试用例（含多函数交汇临界点 + 用例），`Content-Type: application/json`
+- `fmt=csv`：测试用例表（先交汇临界点再用例，含 source/covered 等），`Content-Type: text/csv`
+- `fmt=markdown`：灰盒测试用例清单（步骤、预期、性能/时序要求），`Content-Type: text/markdown`
 - `fmt=findings`：原始发现及 AI 增强数据，`Content-Type: application/json`
+- `fmt=critical`：仅多函数交汇临界点（JSON），便于快速粘贴到测试系统
+- `fmt=html`：单页 HTML 报告（汇总与交汇临界点），`Content-Type: text/html`，建议 `inline` 打开
 
-**响应 200：** 直接返回文件流，带 `Content-Disposition` 附件头。
+**响应 200：** 直接返回文件流，带 `Content-Disposition` 附件头（html 为 inline）。
 
 ### POST `/api/v1/analysis/tasks/{task_id}/retry` — 重试
 
