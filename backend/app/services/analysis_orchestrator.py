@@ -30,6 +30,7 @@ from app.analyzers.code_parser import CodeParser
 from app.analyzers.registry import get_display_name
 from app.repositories import task_repo
 from app.services.ai_enrichment import enrich_module, synthesize_cross_module
+from app.services.coverage_import_service import get_imported_coverage_for_task
 
 logger = logging.getLogger(__name__)
 
@@ -100,13 +101,15 @@ def _topological_order(modules: list[str]) -> list[str]:
     return order
 
 
-def _build_context(task, upstream: dict[str, dict]) -> AnalyzeContext:
-    """从任务 ORM 对象构建分析上下文。options 含 max_files/max_functions 等限界，便于复杂项目容错。"""
-    target = json.loads(task.target_json)
+def _build_context(task, upstream: dict[str, dict], db, target_override: dict | None = None) -> AnalyzeContext:
+    """从任务 ORM 对象构建分析上下文。options 含 max_files/max_functions 等限界；若存在北向导入的覆盖率则注入 coverage_import。target_override 用于按文件分析时传入单文件 target。"""
+    target = target_override if target_override is not None else json.loads(task.target_json)
     revision = json.loads(task.revision_json)
     options = json.loads(task.options_json) if task.options_json else {}
     options.setdefault("max_files", 500)
     options.setdefault("max_functions", 10000)
+    options["coverage_import"] = get_imported_coverage_for_task(db, task.task_id)
+
     from app.repositories import repository_repo
     from app.core.database import SessionLocal
 
@@ -196,21 +199,50 @@ def run_task(db: Session, task_id: str) -> None:
         task_repo.update_module_result(db, mr.id, status="running")
 
         try:
-            # 构建上下文
-            ctx = _build_context(task, upstream)
-
-            # 运行已注册的分析器，否则使用占位实现
-            analyzer_mod = _ANALYZER_REGISTRY.get(mod_id)
-            if analyzer_mod is not None:
-                module_result: ModuleResult = analyzer_mod.analyze(ctx)
+            target = json.loads(task.target_json)
+            target_files = target.get("target_files") or []
+            if isinstance(target_files, list) and len(target_files) > 0:
+                analysis_targets = [{"path": p, "functions": target.get("functions", [])} for p in target_files]
             else:
-                module_result = _stub_analyze(mod_id, ctx)
+                analysis_targets = [target]
 
-            findings = module_result["findings"]
-            risk_score = module_result["risk_score"]
-            metrics = module_result["metrics"]
-            artifacts = module_result["artifacts"]
-            warnings = module_result["warnings"]
+            all_findings = []
+            all_warnings = []
+            last_metrics = {}
+            last_artifacts = []
+            first_ctx = None
+
+            for one_target in analysis_targets:
+                ctx = _build_context(task, upstream, db, target_override=one_target)
+                if first_ctx is None:
+                    first_ctx = ctx
+                analyzer_mod = _ANALYZER_REGISTRY.get(mod_id)
+                if analyzer_mod is not None:
+                    module_result: ModuleResult = analyzer_mod.analyze(ctx)
+                else:
+                    module_result = _stub_analyze(mod_id, ctx)
+                all_findings.extend(module_result["findings"])
+                all_warnings.extend(module_result.get("warnings", []))
+                last_metrics = module_result.get("metrics", {})
+                last_artifacts = module_result.get("artifacts", [])
+
+            findings = all_findings
+            risk_score = (sum(f.get("risk_score") or 0 for f in findings) / len(findings)) if findings else 0.0
+            metrics = {**last_metrics, "findings_count": len(findings)}
+            artifacts = last_artifacts
+            warnings = all_warnings
+            ctx = first_ctx  # 后续 AI/片段收集用首个目标上下文
+
+            max_per = ctx["options"].get("max_findings_per_module", 150)
+            if len(findings) > max_per:
+                findings = sorted(
+                    findings,
+                    key=lambda f: (-(f.get("risk_score") or 0), f.get("finding_id", "")),
+                )[:max_per]
+                logger.info(
+                    "模块 %s 发现数超过上限 %s，已按风险分截断保留前 %s 条",
+                    get_display_name(mod_id), max_per, max_per,
+                )
 
             # AI 增强分析
             ai_summary_data: dict[str, Any] = {}

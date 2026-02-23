@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 class AnalysisTarget(BaseModel):
     path: str = ""
     functions: list[str] = []
+    target_files: list[str] = []  # 可选：仅分析这些文件（大仓增量/变更文件）
 
 
 class AnalysisRevision(BaseModel):
@@ -58,6 +59,16 @@ class TaskCreateRequest(BaseModel):
 
 class RetryRequest(BaseModel):
     modules: list[str] = []
+
+
+class CoverageImportRequest(BaseModel):
+    """北向接口：写入覆盖率数据。format=summary 时需提供 files；format=granular 时需提供 covered 或 tests。"""
+    source_system: Optional[str] = Field(default="", max_length=128)
+    revision: Optional[str] = Field(default="", max_length=256)
+    format: str = Field(..., pattern="^(summary|granular)$")
+    files: Optional[dict[str, Any]] = None
+    covered: Optional[list[dict[str, Any]]] = None
+    tests: Optional[list[dict[str, Any]]] = None
 
 
 # ── 响应模型 ──────────────────────────────────────────────────────────

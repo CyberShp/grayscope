@@ -46,6 +46,7 @@ def _findings_to_testcases(
 
         execution_hint = _risk_type_to_execution_hint(risk_type, f)
         example_input = _risk_type_to_example_input(risk_type, f)
+        fault_window = _risk_type_to_fault_window(risk_type, f)
         related_functions = _get_related_functions(f)
         expected_failure = _get_expected_failure(risk_type, f)
         unacceptable_outcomes = _get_unacceptable_outcomes(risk_type, f)
@@ -66,6 +67,7 @@ def _findings_to_testcases(
             "expected_result": expected,
             "execution_hint": execution_hint,
             "example_input": example_input,
+            "fault_window": fault_window,
             "related_functions": related_functions,
             "expected_failure": expected_failure,
             "unacceptable_outcomes": unacceptable_outcomes,
@@ -186,6 +188,8 @@ def _risk_type_to_objective(risk_type: str, finding: dict) -> str:
         "branch_cleanup": f"验证 {sym} 中的清理路径是否释放所有资源",
         "branch_boundary": f"验证 {sym} 中的边界条件分支是否正确处理边界值",
         "branch_normal": f"验证 {sym} 的正常执行路径",
+        "branch_high_complexity": f"验证高分支数函数 {sym} 的深层路径覆盖（优先错误/清理路径，再边界组合）",
+        "branch_switch_no_default": f"验证 {sym} 中 switch 对未列出 case 值的处理（缺 default 分支）",
         "boundary_miss": f"测试 {sym} 中约束条件的边界值",
         "invalid_input_gap": f"验证 {sym} 中数组/缓冲区访问的输入校验",
         "missing_cleanup": f"验证 {sym} 在错误路径上是否正确释放所有资源",
@@ -256,6 +260,12 @@ def _risk_type_to_steps(risk_type: str, finding: dict) -> list[str]:
         if impacted:
             steps.append(f"3. 对受影响的调用者运行回归测试: {impacted}")
         steps.append("4. 验证功能行为符合规范")
+    elif risk_type == "branch_high_complexity":
+        branch_count = ev.get("branch_count", 0)
+        steps.append(f"1. 通过内网覆盖率系统或本地覆盖率工具查看 {sym} 的未覆盖分支（共 {branch_count} 个分支）")
+        steps.append("2. 优先为错误处理、资源清理路径补充用例")
+        steps.append("3. 再为边界条件、状态判断补充边界组合输入")
+        steps.append("4. 用覆盖率系统或工具确认关键路径已覆盖")
     else:
         steps.append(f"1. 搭建 {sym} 的测试环境")
         steps.append(f"2. 使用代表性输入调用 {sym}")
@@ -278,6 +288,8 @@ def _risk_type_to_expected(risk_type: str, finding: dict) -> str:
         "atomicity_gap": "在所有代码路径（包括错误路径）上锁均正确释放",
         "changed_core_path": "修改后的函数行为与规范一致",
         "transitive_impact": "上游变更后调用函数继续正常工作",
+        "branch_high_complexity": "关键分支（尤其错误/清理路径）被覆盖，深层路径行为符合预期，无资源泄漏",
+        "branch_switch_no_default": "switch 对未列出值有明确处理（或补充 default），无静默跳过或未定义行为",
     }
     return mapping.get(risk_type, "函数行为正确且优雅地处理边界情况")
 
@@ -294,6 +306,7 @@ def _risk_type_to_execution_hint(risk_type: str, finding: dict) -> str:
         "lock_order_inversion": "并发执行涉及该锁的多个线程，观察是否出现死锁。",
         "changed_core_path": "在测试环境运行该函数的现有用例及回归用例。",
         "transitive_impact": "运行受影响模块的集成/回归测试。",
+        "branch_high_complexity": f"通过覆盖率系统或覆盖率工具查看 {sym} 未覆盖分支，优先补充错误/清理路径用例，再补充边界组合。",
     }
     return hints.get(risk_type, f"在测试环境按上述步骤执行，重点验证 {sym} 的行为与预期一致。")
 
@@ -309,6 +322,31 @@ def _risk_type_to_example_input(risk_type: str, finding: dict) -> str:
     if "race" in risk_type or "lock" in risk_type:
         return "示例: 多线程同时调用同一接口，或交替调用不同接口。"
     return ""
+
+
+def _risk_type_to_fault_window(risk_type: str, finding: dict) -> dict | None:
+    """L3 故障注入窗口：after/before/method，便于测试人员确定注入时机与方式。"""
+    sym = finding.get("symbol_name", "目标函数")
+    line = finding.get("line_start") or finding.get("line_end") or 0
+    loc = f"{finding.get('file_path', '')}:{sym}:L{line}" if line else f"{finding.get('file_path', '')}:{sym}"
+
+    windows = {
+        "branch_error": {"after": f"进入 {sym} 函数", "before": "错误分支执行完毕或返回", "method": "注入失败返回值或构造触发错误分支的输入"},
+        "branch_cleanup": {"after": f"进入 {sym} 函数", "before": "清理标签执行完毕", "method": "触发错误路径使控制流经 goto 到达清理；或注入资源分配失败"},
+        "branch_switch_no_default": {"after": f"进入 {sym} 函数", "before": "switch 语句执行完毕", "method": "向 switch 变量注入未列出的 case 值"},
+        "branch_high_complexity": {"after": f"进入 {sym} 函数", "before": "函数返回", "method": "边界组合输入或注入使深层分支被执行"},
+        "missing_cleanup": {"after": "资源分配点", "before": "函数返回或跳转清理", "method": "在分配后注入失败，验证清理路径"},
+        "race_write_without_lock": {"after": "共享变量可见", "before": "临界区结束", "method": "多线程并发访问同一变量"},
+        "lock_order_inversion": {"after": "获取第一把锁", "before": "释放第二把锁", "method": "另一线程以相反顺序获取锁"},
+        "boundary_miss": {"after": f"调用 {sym} 前", "before": f"{sym} 返回", "method": "传入边界值、边界±1"},
+        "invalid_input_gap": {"after": "输入进入校验逻辑前", "before": "数组/缓冲区访问", "method": "传入越界索引或超长输入"},
+    }
+    out = windows.get(risk_type)
+    if out:
+        return out
+    if "branch_" in risk_type:
+        return {"after": f"进入 {sym} 函数", "before": "该分支执行完毕", "method": "构造触发该分支的输入或注入"}
+    return {"after": f"调用 {sym} 前", "before": f"{sym} 返回", "method": "按测试步骤执行"}
 
 
 def export_json(db: Session, task_id: str) -> str:

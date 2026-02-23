@@ -1,13 +1,15 @@
 """分析任务 API 端点。"""
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import PlainTextResponse
 from sqlalchemy.orm import Session
-from starlette.status import HTTP_201_CREATED, HTTP_202_ACCEPTED
+from starlette.status import HTTP_201_CREATED, HTTP_202_ACCEPTED, HTTP_400_BAD_REQUEST, HTTP_404_NOT_FOUND
 
 from app.core.database import get_db
 from app.core.response import ok
-from app.schemas.analysis import RetryRequest, TaskCreateRequest
+from app.repositories import task_repo
+from app.repositories.coverage_import_repo import create as coverage_import_create, get_latest_by_task_id
+from app.schemas.analysis import CoverageImportRequest, RetryRequest, TaskCreateRequest
 from app.services import analysis_orchestrator, export_service, task_service
 
 router = APIRouter()
@@ -103,3 +105,67 @@ def cancel_task(task_id: str, db: Session = Depends(get_db)) -> dict:
     """取消分析任务。"""
     out = task_service.cancel_task(db, task_id)
     return ok(out.model_dump())
+
+
+@router.post("/analysis/tasks/{task_id}/coverage")
+def import_coverage(
+    task_id: str, req: CoverageImportRequest, db: Session = Depends(get_db)
+) -> dict:
+    """北向接口：写入覆盖率数据。内网覆盖率系统可推送已覆盖路径/分支到此。"""
+    task = task_repo.get_task_by_id(db, task_id)
+    if not task:
+        raise HTTPException(HTTP_404_NOT_FOUND, detail="任务不存在")
+    if req.format == "summary":
+        if not req.files or not isinstance(req.files, dict):
+            raise HTTPException(
+                HTTP_400_BAD_REQUEST,
+                detail="format=summary 时需提供 files 对象",
+            )
+        payload = {"files": req.files}
+    else:
+        covered = req.covered if isinstance(req.covered, list) else []
+        tests = req.tests if isinstance(req.tests, list) else []
+        if not covered and not tests:
+            raise HTTPException(
+                HTTP_400_BAD_REQUEST,
+                detail="format=granular 时需提供 covered 或 tests",
+            )
+        payload = {"covered": covered, "tests": tests}
+    row = coverage_import_create(
+        db,
+        task_id=task.id,
+        source_system=req.source_system or "",
+        revision=req.revision or "",
+        format=req.format,
+        payload=payload,
+    )
+    return ok(
+        {
+            "import_id": row.id,
+            "task_id": task_id,
+            "format": row.format,
+            "source_system": row.source_system,
+        },
+        message="覆盖率数据已写入",
+    )
+
+
+@router.get("/analysis/tasks/{task_id}/coverage")
+def get_coverage_import(task_id: str, db: Session = Depends(get_db)) -> dict:
+    """查询该任务最近一次导入的覆盖率元数据。"""
+    task = task_repo.get_task_by_id(db, task_id)
+    if not task:
+        raise HTTPException(HTTP_404_NOT_FOUND, detail="任务不存在")
+    row = get_latest_by_task_id(db, task.id)
+    if not row:
+        return ok({"latest": None, "has_data": False})
+    return ok({
+        "latest": {
+            "import_id": row.id,
+            "source_system": row.source_system,
+            "revision": row.revision,
+            "format": row.format,
+            "created_at": row.created_at.isoformat() if row.created_at else None,
+        },
+        "has_data": True,
+    })

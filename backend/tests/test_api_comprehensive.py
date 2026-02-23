@@ -606,6 +606,76 @@ class TestTaskExport:
         res = client.get(f"/api/v1/analysis/tasks/{task['task_id']}/export?fmt=findings")
         assert res.status_code == 200
 
+    def test_062b_coverage_import_summary(self, client, create_task):
+        """北向接口：POST 写入 summary 格式覆盖率."""
+        _, _, task = create_task()
+        res = client.post(
+            f"/api/v1/analysis/tasks/{task['task_id']}/coverage",
+            json={
+                "source_system": "test_platform",
+                "revision": "abc123",
+                "format": "summary",
+                "files": {
+                    "src/storage/volume.c": {
+                        "lines_total": 100,
+                        "lines_hit": 65,
+                        "branches_total": 20,
+                        "branches_hit": 12,
+                        "functions": {"open_volume": True, "close_volume": False},
+                    }
+                },
+            },
+        )
+        assert res.status_code == 200
+        data = res.json()["data"]
+        assert data["import_id"] >= 1
+        assert data["task_id"] == task["task_id"]
+        assert data["format"] == "summary"
+        assert data["source_system"] == "test_platform"
+
+    def test_062c_coverage_import_granular(self, client, create_task):
+        """北向接口：POST 写入 granular 格式覆盖率."""
+        _, _, task = create_task()
+        res = client.post(
+            f"/api/v1/analysis/tasks/{task['task_id']}/coverage",
+            json={
+                "format": "granular",
+                "covered": [
+                    {"file": "src/foo.c", "symbol": "bar", "line": 10, "branch_id": "b0"}
+                ],
+            },
+        )
+        assert res.status_code == 200
+        assert res.json()["data"]["format"] == "granular"
+
+    def test_062d_coverage_get_no_import(self, client, create_task):
+        """北向接口：GET 无导入时返回 has_data false."""
+        _, _, task = create_task()
+        res = client.get(f"/api/v1/analysis/tasks/{task['task_id']}/coverage")
+        assert res.status_code == 200
+        assert res.json()["data"]["has_data"] is False
+        assert res.json()["data"]["latest"] is None
+
+    def test_062e_coverage_get_after_import(self, client, create_task):
+        """北向接口：GET 导入后有 latest 元数据."""
+        _, _, task = create_task()
+        client.post(
+            f"/api/v1/analysis/tasks/{task['task_id']}/coverage",
+            json={"format": "summary", "files": {"a.c": {"lines_total": 1, "lines_hit": 1}}},
+        )
+        res = client.get(f"/api/v1/analysis/tasks/{task['task_id']}/coverage")
+        assert res.status_code == 200
+        assert res.json()["data"]["has_data"] is True
+        assert res.json()["data"]["latest"]["format"] == "summary"
+
+    def test_062f_coverage_import_task_not_found(self, client):
+        """北向接口：POST 任务不存在返回 404."""
+        res = client.post(
+            "/api/v1/analysis/tasks/nonexistent-uuid/coverage",
+            json={"format": "summary", "files": {}},
+        )
+        assert res.status_code == 404
+
 
 # ═══════════════════════════════════════════════════════════════════
 # 5. AGGREGATION ENDPOINTS (22 cases)

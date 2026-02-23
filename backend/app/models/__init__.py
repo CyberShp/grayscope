@@ -3,6 +3,7 @@
 from app.models.analysis_task import AnalysisTask
 from app.models.audit_event import AuditEvent
 from app.models.base import Base
+from app.models.coverage_import import CoverageImport
 from app.models.defect_pattern import DefectPattern
 from app.models.export import Export
 from app.models.model_config import ModelConfig
@@ -24,4 +25,5 @@ __all__ = [
     "DefectPattern",
     "Export",
     "AuditEvent",
+    "CoverageImport",
 ]

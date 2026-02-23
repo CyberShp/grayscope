@@ -1,18 +1,23 @@
 # GrayScope 灰盒测试分析平台
 
-面向数据存储软件的 AI 驱动灰盒/白盒测试分析系统。
+面向数据存储软件的 **AI 驱动灰盒测试分析系统**。通过静态代码分析（tree-sitter）与 AI 推理相结合，识别**多函数交汇临界点**，区分**预期失败**与**不可接受结果**，生成可执行、可读的灰盒测试用例。
 
-GrayScope 帮助测试团队从黑盒测试转向智能灰盒/白盒分析，通过静态代码分析（tree-sitter）与 AI 推理相结合，识别：
+**灰盒核心**：在有限代码结构可见的前提下，精准找到多个函数（或故障处理分支）在同一场景下交汇的临界点，用**少量精准用例**暴露「建联失败」等可接受失败之外的「控制器下电、进程崩溃」等不可接受结果。详见 [灰盒测试分析原理与设计](docs/GRAYBOX_ANALYSIS.md)。
 
-- **分支路径分析** (branch_path)：控制流分支分类与覆盖缺口
-- **边界值分析** (boundary_value)：比较/数组访问边界候选推导
-- **错误路径分析** (error_path)：资源生命周期、清理与 errno 一致性
-- **调用图构建** (call_graph)：函数依赖图与扇入/扇出分析
-- **并发风险分析** (concurrency)：共享变量竞态与锁顺序分析
-- **差异影响分析** (diff_impact)：Git diff → 函数映射 → 传递影响
-- **覆盖率映射** (coverage_map)：覆盖率与风险发现叠加
-- **事后分析** (postmortem)：逃逸缺陷根因链与预防性测试
-- **缺陷知识库** (knowledge_pattern)：缺陷模式提取、持久化与匹配
+GrayScope 提供九大分析模块：
+
+| 模块 | 说明 |
+|------|------|
+| **branch_path** | 控制流分支分类（错误/清理/边界/正常路径）与覆盖缺口 |
+| **boundary_value** | 比较/数组访问边界候选推导，支持调用链传播 |
+| **error_path** | 资源生命周期、清理、errno 一致性、跨函数资源泄漏 |
+| **call_graph** | 函数依赖图、扇入/扇出、调用链，为灰盒交汇点提供基础 |
+| **data_flow** | 跨函数参数传播、外部输入→敏感操作、值域变换风险 |
+| **concurrency** | 共享变量竞态、锁顺序、跨函数死锁/竞态 |
+| **diff_impact** | Git diff → 变更函数 → 传递影响与回归热点 |
+| **coverage_map** | 覆盖率与风险发现叠加，高风险低覆盖清单 |
+| **postmortem** | 逃逸缺陷根因链与预防性测试建议 |
+| **knowledge_pattern** | 缺陷模式提取、持久化与发现匹配 |
 
 ## 技术栈
 
@@ -79,7 +84,7 @@ grayscope/
 │       └── composables/
 ├── cli/                     # Typer CLI
 │   └── grayscope_cli/
-├── docs/                    # PRD、HLD、PLAN、API、DB、分析器契约
+├── docs/                    # 灰盒分析原理、PRD、HLD、API、DB、分析器契约等
 ├── docker-compose.yml
 └── README.md
 ```
@@ -171,12 +176,18 @@ python -m grayscope_cli.main knowledge search --project 1 --keyword leak
 
 ## 文档
 
-- [PRD](docs/PRD.md) — 产品需求
-- [HLD](docs/HLD.md) — 高层设计
-- [PLAN](docs/PLAN.md) — 实施计划
-- [API_SPEC](docs/API_SPEC.md) — API 规范
-- [DB_SCHEMA](docs/DB_SCHEMA.md) — 数据库 schema
-- [ANALYZER_CONTRACTS](docs/ANALYZER_CONTRACTS.md) — 分析器契约
+| 文档 | 说明 |
+|------|------|
+| [灰盒测试分析原理与设计](docs/GRAYBOX_ANALYSIS.md) | **灰盒分析原理、多函数交汇临界点、预期失败 vs 不可接受结果、各分析器灰盒证据设计、数据流与用例生成** |
+| [核心功能代码实现说明](docs/IMPLEMENTATION.md) | **从 API → 任务创建 → 编排器 → 各分析器 analyze() → 发现持久化 → 导出为测试用例的完整代码路径与关键实现** |
+| [灰盒核心价值说明](docs/GRAYBOX_VALUE.md) | 黑盒 vs 灰盒、iSCSI 示例、GrayScope 如何支撑 |
+| [PRD](docs/PRD.md) | 产品需求 |
+| [HLD](docs/HLD.md) | 高层设计 |
+| [PLAN](docs/PLAN.md) | 实施计划 |
+| [API_SPEC](docs/API_SPEC.md) | API 规范 |
+| [DB_SCHEMA](docs/DB_SCHEMA.md) | 数据库 schema |
+| [ANALYZER_CONTRACTS](docs/ANALYZER_CONTRACTS.md) | 分析器契约 |
+| [TEST_REPORT](docs/TEST_REPORT.md) | 测试报告 |
 
 ## 许可证
 

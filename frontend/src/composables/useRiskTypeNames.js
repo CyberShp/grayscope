@@ -11,6 +11,8 @@ const RISK_TYPE_NAMES = {
   branch_state: '分支状态',
   branch_normal: '分支正常路径',
   branch_missing_test: '分支缺测',
+  branch_high_complexity: '分支高复杂度',
+  branch_switch_no_default: 'switch 缺 default',
 
   // boundary_value
   boundary_miss: '边界遗漏',

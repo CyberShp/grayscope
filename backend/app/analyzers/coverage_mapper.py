@@ -103,7 +103,12 @@ def parse_json_coverage(json_path: Path) -> dict[str, FileCoverage]:
         data = json.loads(json_path.read_text(errors="replace"))
     except Exception:
         return coverage
+    return _summary_payload_to_file_coverage(data)
 
+
+def _summary_payload_to_file_coverage(data: dict) -> dict[str, FileCoverage]:
+    """将北向接口 summary 格式的 payload 转为 FileCoverage 字典。"""
+    coverage: dict[str, FileCoverage] = {}
     files = data.get("files", data)
     if isinstance(files, dict):
         for fpath, fdata in files.items():
@@ -119,12 +124,55 @@ def parse_json_coverage(json_path: Path) -> dict[str, FileCoverage]:
                 if isinstance(funcs, dict):
                     cov.function_coverage = {k: bool(v) for k, v in funcs.items()}
                 coverage[fpath] = cov
+    return coverage
 
+
+def _granular_payload_to_file_coverage(data: dict) -> dict[str, FileCoverage]:
+    """将北向接口 granular 格式的 payload 聚合成文件级 FileCoverage。"""
+    coverage: dict[str, FileCoverage] = {}
+    all_covered: list[dict] = list(data.get("covered") or []) if isinstance(data.get("covered"), list) else []
+    for t in data.get("tests") or []:
+        if isinstance(t, dict) and isinstance(t.get("covered"), list):
+            all_covered.extend(t["covered"])
+    by_file: dict[str, dict[str, Any]] = {}
+    for item in all_covered:
+        if not isinstance(item, dict) or "file" not in item:
+            continue
+        fpath = item["file"]
+        if fpath not in by_file:
+            by_file[fpath] = {"lines": set(), "branches": set(), "functions": set()}
+        line = item.get("line")
+        if line is not None:
+            by_file[fpath]["lines"].add(int(line))
+        branch_id = item.get("branch_id")
+        if branch_id is not None:
+            by_file[fpath]["branches"].add((line, branch_id))
+        sym = item.get("symbol")
+        if sym:
+            by_file[fpath]["functions"].add(sym)
+    for fpath, agg in by_file.items():
+        lines_hit = len(agg["lines"])
+        branches_hit = len(agg["branches"])
+        cov = FileCoverage(
+            file_path=fpath,
+            lines_total=max(lines_hit, 1),
+            lines_hit=lines_hit,
+            branches_total=max(branches_hit, 0),
+            branches_hit=branches_hit,
+        )
+        cov.function_coverage = {fn: True for fn in agg["functions"]}
+        if not agg["functions"]:
+            cov.function_coverage = {}
+        coverage[fpath] = cov
     return coverage
 
 
 def load_coverage(options: dict) -> dict[str, FileCoverage]:
-    """从配置的来源加载覆盖率数据。"""
+    """从配置的来源加载覆盖率数据。优先使用北向接口导入的数据，其次 coverage_path 文件。"""
+    # 北向接口已注入的覆盖率（由编排器在运行 coverage_map 前写入 options）
+    imported = options.get("coverage_import")
+    if isinstance(imported, dict) and imported:
+        return imported
     cov_path_str = options.get("coverage_path", "")
     if not cov_path_str:
         return {}

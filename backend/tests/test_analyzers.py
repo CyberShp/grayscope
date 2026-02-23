@@ -435,35 +435,35 @@ class TestBranchPathAnalyzer:
 
     def test_classify_error_branch(self):
         """TS-BP-003: NULL check classifies as error."""
-        from app.analyzers.branch_path_analyzer import _classify_branch
-        assert _classify_branch("if (ptr == NULL)") == "error"
-        assert _classify_branch("if (ret < 0)") == "error"
-        assert _classify_branch("if (!buf)") == "error"
+        from app.analyzers.branch_path_lib import classify_branch
+        assert classify_branch("if (ptr == NULL)") == "error"
+        assert classify_branch("if (ret < 0)") == "error"
+        assert classify_branch("if (!buf)") == "error"
 
     def test_classify_cleanup_branch(self):
         """TS-BP-004: goto/cleanup classifies as cleanup."""
-        from app.analyzers.branch_path_analyzer import _classify_branch
-        assert _classify_branch("goto cleanup") == "cleanup"
-        assert _classify_branch("goto err_out") == "cleanup"
+        from app.analyzers.branch_path_lib import classify_branch
+        assert classify_branch("goto cleanup") == "cleanup"
+        assert classify_branch("goto err_out") == "cleanup"
 
     def test_classify_boundary_branch(self):
         """TS-BP-005: Numeric comparisons classify as boundary."""
-        from app.analyzers.branch_path_analyzer import _classify_branch
-        assert _classify_branch("if (size > 1024)") == "boundary"
-        assert _classify_branch("if (idx >= MAX_SIZE)") == "boundary"
+        from app.analyzers.branch_path_lib import classify_branch
+        assert classify_branch("if (size > 1024)") == "boundary"
+        assert classify_branch("if (idx >= MAX_SIZE)") == "boundary"
 
     def test_classify_normal_branch(self):
         """TS-BP-006: Generic branches classify as normal."""
-        from app.analyzers.branch_path_analyzer import _classify_branch
-        result = _classify_branch("if (use_cache)")
+        from app.analyzers.branch_path_lib import classify_branch
+        result = classify_branch("if (use_cache)")
         assert result in ("normal", "state")
 
     def test_score_branch_types(self):
         """TS-BP-007: Risk scores vary by path type."""
-        from app.analyzers.branch_path_analyzer import _score_branch
-        assert _score_branch("error") > _score_branch("normal")
-        assert _score_branch("cleanup") > _score_branch("normal")
-        assert _score_branch("boundary") > _score_branch("normal")
+        from app.analyzers.branch_path_lib import score_branch
+        assert score_branch("error") > score_branch("normal")
+        assert score_branch("cleanup") > score_branch("normal")
+        assert score_branch("boundary") > score_branch("normal")
 
     def test_analyze_nonexistent_path(self, tmp_c_dir):
         """TS-BP-008: Nonexistent path produces warning."""
@@ -512,9 +512,9 @@ class TestBranchPathAnalyzer:
 
     def test_classify_compound_condition(self):
         """TS-BP-011: Compound conditions are classified correctly."""
-        from app.analyzers.branch_path_analyzer import _classify_branch
+        from app.analyzers.branch_path_lib import classify_branch
         # && takes the most severe
-        result = _classify_branch("if (ptr == NULL && size > 0)")
+        result = classify_branch("if (ptr == NULL && size > 0)")
         assert result == "error"
 
     def test_analyze_directory(self, tmp_c_dir):

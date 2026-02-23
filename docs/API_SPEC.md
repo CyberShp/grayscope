@@ -390,6 +390,25 @@
 
 **响应 202：** 任务被取消。
 
+### POST `/api/v1/analysis/tasks/{task_id}/coverage` — 写入覆盖率（北向接口）
+
+**说明**：供内网覆盖率系统等外部数据源推送「已覆盖的路径/分支/函数」到 GrayScope。详见 [覆盖率北向接口](COVERAGE_NORTHBOUND.md)。
+
+**请求体**：
+
+- `source_system`（可选）：来源系统标识。
+- `revision`（可选）：版本/构建标识。
+- `format`（必填）：`summary` | `granular`。
+- **summary**：`files` — 键为文件路径，值为 `{ lines_total, lines_hit, branches_total, branches_hit, functions: { 函数名: true|false } }`。
+- **granular**：`covered` — 数组，项为 `{ file, symbol?, line?, branch_id? }`；可选 `tests` — 数组，项为 `{ test_id, name?, covered: [...] }`。
+
+**响应 200**：`{ "code": "OK", "data": { "import_id": 1, "task_id": "...", "format": "summary", "source_system": "..." } }`  
+**404**：任务不存在。**400**：body 格式错误。
+
+### GET `/api/v1/analysis/tasks/{task_id}/coverage` — 查询已导入覆盖率元数据
+
+**响应 200**：`{ "code": "OK", "data": { "latest": { "import_id", "source_system", "revision", "format", "created_at" } | null, "has_data": true|false } }`。
+
 ---
 
 ## 6. 事后分析
