@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, desc
 from sqlalchemy.orm import Session
 
+from app.config import settings as app_settings
 from app.core.database import get_db
 from app.core.response import ok
 from app.models.analysis_task import AnalysisTask
@@ -568,7 +569,7 @@ def list_all_tasks(
 
 @router.get("/settings")
 def get_settings() -> dict:
-    """获取系统设置。"""
+    """获取系统设置。display_timezone 为部署环境时区，前端据此统一展示时间。"""
     return ok({
         "quality_gate": {
             "max_risk_score": 60,
@@ -579,6 +580,7 @@ def get_settings() -> dict:
             "version": "1.0.0",
             "database": "sqlite",
             "deployment": "intranet",
+            "display_timezone": getattr(app_settings, "display_timezone", "Asia/Shanghai"),
         },
     })
 

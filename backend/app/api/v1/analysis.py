@@ -1,7 +1,10 @@
 """分析任务 API 端点。"""
 
+from typing import List
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import PlainTextResponse
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from starlette.status import HTTP_201_CREATED, HTTP_202_ACCEPTED, HTTP_400_BAD_REQUEST, HTTP_404_NOT_FOUND
 
@@ -9,8 +12,12 @@ from app.core.database import get_db
 from app.core.response import ok
 from app.repositories import task_repo
 from app.repositories.coverage_import_repo import create as coverage_import_create, get_latest_by_task_id
-from app.schemas.analysis import CoverageImportRequest, RetryRequest, TaskCreateRequest
+from app.schemas.analysis import CoverageImportRequest, RetryRequest, TaskCreateRequest, TaskMrUpdate
 from app.services import analysis_orchestrator, export_service, task_service
+
+
+class BatchDeleteRequest(BaseModel):
+    task_ids: List[str]
 
 router = APIRouter()
 
@@ -112,6 +119,56 @@ def export_task(
                 "Content-Disposition": f'attachment; filename="grayscope_{task_id}_testcases.json"'
             },
         )
+
+
+@router.patch("/analysis/tasks/{task_id}/mr")
+def update_task_mr(
+    task_id: str, req: TaskMrUpdate, db: Session = Depends(get_db)
+) -> dict:
+    """更新任务关联的 MR/PR 链接与代码变更，供前端「MR 代码变更」板块展示。"""
+    task = task_repo.update_task_mr(
+        db, task_id, mr_url=req.mr_url, mr_diff=req.mr_diff
+    )
+    if not task:
+        raise HTTPException(HTTP_404_NOT_FOUND, detail="任务不存在")
+    out = task_service.get_task_status(db, task_id)
+    return ok(out.model_dump(), message="MR 信息已更新")
+
+
+@router.delete("/analysis/tasks/{task_id}")
+def delete_task(task_id: str, db: Session = Depends(get_db)) -> dict:
+    """删除分析任务及所有关联的风险发现、测试用例、模块结果等。"""
+    task = task_repo.get_task_by_id(db, task_id)
+    if not task:
+        raise HTTPException(HTTP_404_NOT_FOUND, detail="任务不存在")
+    counts = task_repo.delete_task_cascade(db, task.id)
+    return ok(counts, message="任务已删除")
+
+
+@router.post("/analysis/tasks/delete-preview")
+def delete_preview(req: BatchDeleteRequest, db: Session = Depends(get_db)) -> dict:
+    """预览删除影响：返回将被删除的风险发现、测试用例等数量。"""
+    task_pks = []
+    for tid in req.task_ids:
+        task = task_repo.get_task_by_id(db, tid)
+        if task:
+            task_pks.append(task.id)
+    counts = task_repo.delete_preview(db, task_pks)
+    return ok(counts)
+
+
+@router.post("/analysis/tasks/batch-delete")
+def batch_delete_tasks(req: BatchDeleteRequest, db: Session = Depends(get_db)) -> dict:
+    """批量删除分析任务及所有关联数据。"""
+    task_pks = []
+    for tid in req.task_ids:
+        task = task_repo.get_task_by_id(db, tid)
+        if task:
+            task_pks.append(task.id)
+    if not task_pks:
+        raise HTTPException(HTTP_404_NOT_FOUND, detail="未找到任何有效任务")
+    counts = task_repo.delete_tasks_batch(db, task_pks)
+    return ok(counts, message=f"已删除 {counts['task_count']} 个任务")
 
 
 @router.post("/analysis/tasks/{task_id}/retry", status_code=HTTP_202_ACCEPTED)

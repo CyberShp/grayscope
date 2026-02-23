@@ -991,6 +991,7 @@ class TestAnalyzerRegistry:
         from app.analyzers.registry import ALL_MODULES, MODULE_REGISTRY
         expected = {
             "branch_path", "boundary_value", "error_path", "call_graph",
+            "path_and_resource",
             "data_flow", "concurrency", "diff_impact", "coverage_map",
             "postmortem", "knowledge_pattern",
         }

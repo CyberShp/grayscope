@@ -18,6 +18,7 @@ from app.analyzers import (
     boundary_value_analyzer,
     error_path_analyzer,
     call_graph_builder,
+    path_and_resource_analyzer,
     data_flow_analyzer,
     concurrency_analyzer,
     diff_impact_analyzer,
@@ -31,6 +32,7 @@ from app.analyzers.registry import get_display_name
 from app.repositories import task_repo
 from app.services.ai_enrichment import enrich_module, synthesize_cross_module
 from app.services.coverage_import_service import get_imported_coverage_for_task
+from app.services.critical_intersection import compute_static_critical_candidates
 
 logger = logging.getLogger(__name__)
 
@@ -41,12 +43,13 @@ MODULE_DEPS: dict[str, list[str]] = {
     "boundary_value": [],
     "error_path": [],
     "call_graph": [],
+    "path_and_resource": [],  # P2: 合并 branch_path + error_path
     # Phase B: 数据流基础设施
     "data_flow": ["call_graph"],
     # Phase C: 上下文感知分析
     "concurrency": ["call_graph", "data_flow"],
     "diff_impact": ["call_graph", "data_flow"],
-    "coverage_map": ["branch_path", "boundary_value", "error_path"],
+    "coverage_map": ["boundary_value"],  # 发现可来自 branch_path/error_path 或 path_and_resource
     # 事后分析
     "postmortem": [],
     "knowledge_pattern": ["postmortem"],
@@ -58,6 +61,7 @@ MODULE_WEIGHTS: dict[str, float] = {
     "boundary_value": 0.9,
     "error_path": 1.1,
     "call_graph": 0.6,
+    "path_and_resource": 1.1,
     "data_flow": 1.2,
     "concurrency": 1.3,
     "diff_impact": 1.2,
@@ -72,6 +76,7 @@ _ANALYZER_REGISTRY: dict[str, Any] = {
     "boundary_value": boundary_value_analyzer,
     "error_path": error_path_analyzer,
     "call_graph": call_graph_builder,
+    "path_and_resource": path_and_resource_analyzer,
     "data_flow": data_flow_analyzer,
     "concurrency": concurrency_analyzer,
     "diff_impact": diff_impact_analyzer,
@@ -298,6 +303,11 @@ def run_task(db: Session, task_id: str) -> None:
                 else None,
             )
             upstream[mod_id] = {"findings": findings, "risk_score": risk_score}
+            if mod_id == "call_graph":
+                for a in artifacts:
+                    if isinstance(a, dict) and a.get("type") == "call_graph_json":
+                        upstream[mod_id]["call_graph_artifact"] = a.get("data") or {}
+                        break
 
         except Exception as exc:
             logger.exception("模块 %s 执行失败", get_display_name(mod_id))
@@ -316,11 +326,16 @@ def run_task(db: Session, task_id: str) -> None:
     if upstream and enable_cross_ai and not ai_skip and len(upstream) >= 2:
         try:
             logger.info("开始跨模块 AI 综合分析 (模块数=%d)", len(upstream))
-            ctx_for_snippets = _build_context(task, upstream)
+            ctx_for_snippets = _build_context(task, upstream, db)
             snippets = _collect_source_snippets(
                 ctx_for_snippets["workspace_path"], ctx_for_snippets["target"]
             )
-            cross_result = synthesize_cross_module(upstream, snippets, ai_config)
+            cg_artifact = upstream.get("call_graph", {}).get("call_graph_artifact")
+            static_candidates = compute_static_critical_candidates(upstream, cg_artifact)
+            cross_result = synthesize_cross_module(
+                upstream, snippets, ai_config,
+                candidate_combinations=static_candidates,
+            )
 
             # 保存跨模块综合结果（作为特殊的模块结果）
             cross_mr = result_map.get("_cross_module_synthesis")

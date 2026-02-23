@@ -213,3 +213,9 @@ findings（含 risk_type、evidence、related_functions、expected_failure、una
 - **灰盒测试**：利用有限结构信息（调用图、错误路径、数据流、并发、变更影响）识别**多函数交汇临界点**，并区分**预期失败**与**不可接受结果**，用少量精准用例暴露问题。
 - **GrayScope 原理**：静态分析器产出带 evidence 的 findings，evidence 中显式或可推导出 related_functions、expected_failure、unacceptable_outcomes；导出服务与 AI 综合将发现转为结构化测试用例并持久化；前端与导出格式突出灰盒三要素，提升可读性与可执行性。
 - **设计要点**：分析器契约统一、灰盒三要素贯穿发现→用例→展示→导出；AI 通过 critical_combinations 补全跨模块交汇场景；测试用例模型与 API 支持灰盒字段的读写与模板下载。
+
+---
+
+## 九、与第三轮调研（底层分析重构）的关系
+
+[GRAYBOX_RESEARCH_AND_ITERATION.md](GRAYBOX_RESEARCH_AND_ITERATION.md) 第九节提出：**以多函数交互为唯一锚点**，对分析层进行推翻、合并与重构。要点包括：(1) 将 branch_path 与 error_path 合并为「路径与资源」分析；(2) call_graph 仅作基础设施，不再产出高扇出/深影响面类发现；(3) boundary_value 可选并入 data_flow，形成「数据流 + 约束」；(4) **新增静态交汇步骤**：基于 call_graph 与 findings 先计算候选 critical_combinations，再由 AI 排序与补全。本文档第四、五节所述各分析器与灰盒证据设计，在实施第三轮重构时将按上述分层（结构层 / 跨函数风险层 / 叠加与反馈层）演进，**多函数交汇**始终为灰盒分析的核心目标。

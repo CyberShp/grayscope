@@ -54,5 +54,8 @@ class Settings(BaseSettings):
     # --- Task ---
     max_concurrent_tasks: int = 10
 
+    # --- 显示时间（部署环境时区，用于前端时间展示）---
+    display_timezone: str = "Asia/Shanghai"
+
 
 settings = Settings()

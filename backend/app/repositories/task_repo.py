@@ -5,11 +5,16 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, delete as sa_delete
 from sqlalchemy.orm import Session
 
 from app.models.analysis_task import AnalysisTask
 from app.models.module_result import AnalysisModuleResult
+from app.models.risk_finding import RiskFinding
+from app.models.test_case import TestCase
+from app.models.export import Export
+from app.models.coverage_import import CoverageImport
+from app.models.audit_event import AuditEvent
 
 
 # ---------- task CRUD ----------
@@ -82,6 +87,86 @@ def set_aggregate_score(db: Session, task_id: str, score: float) -> None:
     if obj:
         obj.aggregate_risk_score = score
         db.commit()
+
+
+def update_task_mr(db: Session, task_id: str, mr_url: str | None = None, mr_diff: list | None = None) -> AnalysisTask | None:
+    """更新任务的 MR 链接与代码变更（合并到 options_json）。"""
+    obj = get_task_by_id(db, task_id)
+    if obj is None:
+        return None
+    options = {}
+    if obj.options_json:
+        try:
+            options = json.loads(obj.options_json)
+        except (TypeError, json.JSONDecodeError):
+            pass
+    if mr_url is not None:
+        options["mr_url"] = mr_url
+    if mr_diff is not None:
+        options["mr_diff"] = mr_diff
+    obj.options_json = json.dumps(options, ensure_ascii=False)
+    obj.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(obj)
+    return obj
+
+
+def delete_preview(db: Session, task_pks: list[int]) -> dict:
+    """Return counts of related records that will be affected by deleting the given tasks."""
+    finding_count = db.query(func.count(RiskFinding.id)).filter(
+        RiskFinding.task_id.in_(task_pks)
+    ).scalar() or 0
+    testcase_count = db.query(func.count(TestCase.id)).filter(
+        TestCase.task_id.in_(task_pks)
+    ).scalar() or 0
+    module_count = db.query(func.count(AnalysisModuleResult.id)).filter(
+        AnalysisModuleResult.task_id.in_(task_pks)
+    ).scalar() or 0
+    export_count = db.query(func.count(Export.id)).filter(
+        Export.task_id.in_(task_pks)
+    ).scalar() or 0
+    return {
+        "task_count": len(task_pks),
+        "finding_count": finding_count,
+        "testcase_count": testcase_count,
+        "module_result_count": module_count,
+        "export_count": export_count,
+    }
+
+
+def delete_task_cascade(db: Session, task_pk: int) -> dict:
+    """Delete a task and all related records. Returns counts of deleted rows."""
+    counts = delete_preview(db, [task_pk])
+    db.execute(sa_delete(RiskFinding).where(RiskFinding.task_id == task_pk))
+    db.execute(sa_delete(TestCase).where(TestCase.task_id == task_pk))
+    db.execute(sa_delete(Export).where(Export.task_id == task_pk))
+    db.execute(sa_delete(CoverageImport).where(CoverageImport.task_id == task_pk))
+    db.execute(sa_delete(AnalysisModuleResult).where(AnalysisModuleResult.task_id == task_pk))
+    db.query(AuditEvent).filter(AuditEvent.task_id == task_pk).update(
+        {AuditEvent.task_id: None}, synchronize_session=False
+    )
+    db.execute(sa_delete(AnalysisTask).where(AnalysisTask.id == task_pk))
+    db.commit()
+    return counts
+
+
+def delete_tasks_batch(db: Session, task_pks: list[int]) -> dict:
+    """Delete multiple tasks and all related records. Returns counts of deleted rows."""
+    if not task_pks:
+        return {"task_count": 0, "finding_count": 0, "testcase_count": 0,
+                "module_result_count": 0, "export_count": 0}
+    counts = delete_preview(db, task_pks)
+    db.execute(sa_delete(RiskFinding).where(RiskFinding.task_id.in_(task_pks)))
+    db.execute(sa_delete(TestCase).where(TestCase.task_id.in_(task_pks)))
+    db.execute(sa_delete(Export).where(Export.task_id.in_(task_pks)))
+    db.execute(sa_delete(CoverageImport).where(CoverageImport.task_id.in_(task_pks)))
+    db.execute(sa_delete(AnalysisModuleResult).where(AnalysisModuleResult.task_id.in_(task_pks)))
+    db.query(AuditEvent).filter(AuditEvent.task_id.in_(task_pks)).update(
+        {AuditEvent.task_id: None}, synchronize_session=False
+    )
+    db.execute(sa_delete(AnalysisTask).where(AnalysisTask.id.in_(task_pks)))
+    db.commit()
+    return counts
 
 
 def set_cross_module_ai(db: Session, task_id: str, ai_json: str) -> None:

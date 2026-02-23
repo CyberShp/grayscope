@@ -210,7 +210,7 @@ def analyze(ctx: AnalyzeContext) -> ModuleResult:
 
     # 收集上游风险发现
     upstream_findings: list[dict] = []
-    for mod_id in ("branch_path", "boundary_value", "error_path", "concurrency", "diff_impact"):
+    for mod_id in ("branch_path", "boundary_value", "error_path", "path_and_resource", "concurrency", "diff_impact"):
         mod_data = upstream.get(mod_id, {})
         upstream_findings.extend(mod_data.get("findings", []))
 

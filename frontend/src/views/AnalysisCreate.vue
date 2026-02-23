@@ -20,12 +20,15 @@
             </el-select>
           </el-form-item>
           <el-form-item label="代码仓库">
-            <div style="display:flex;gap:8px;width:100%">
-              <el-select v-model="form.repo_id" placeholder="请选择仓库" style="flex:1">
-                <el-option v-for="r in repos" :key="r.id ?? r.repo_id" :label="r.name || r.git_url" :value="r.id ?? r.repo_id" />
+            <div style="display:flex;gap:8px;width:100%;flex-wrap:wrap">
+              <el-select v-model="form.repo_id" placeholder="请选择仓库" style="flex:1;min-width:200px">
+                <el-option v-for="r in repos" :key="r.id ?? r.repo_id" :label="repoLabel(r)" :value="r.id ?? r.repo_id" />
               </el-select>
               <el-button type="primary" plain @click="showNewRepo = true" :disabled="!form.project_id">
                 <el-icon><Plus /></el-icon> 新建仓库
+              </el-button>
+              <el-button type="success" plain @click="showUpload = true" :disabled="!form.project_id">
+                <el-icon><Upload /></el-icon> 上传压缩包
               </el-button>
             </div>
           </el-form-item>
@@ -69,6 +72,11 @@
               <el-input v-model="form.revision.head_commit" placeholder="HEAD" />
             </el-form-item>
           </template>
+
+          <el-divider>MR/PR 关联（可选）</el-divider>
+          <el-form-item label="MR/PR 链接">
+            <el-input v-model="form.options.mr_url" placeholder="GitLab MR 或 GitHub PR 链接，任务详情中可补充代码变更" clearable />
+          </el-form-item>
 
           <el-divider>灰盒核心诉求</el-divider>
           <el-form-item label="多函数交汇临界点">
@@ -168,6 +176,30 @@
         <el-button type="primary" @click="createRepo" :loading="creatingRepo">创建</el-button>
       </template>
     </el-dialog>
+
+    <!-- 上传压缩包对话框 -->
+    <el-dialog v-model="showUpload" title="上传代码压缩包" width="480px" @closed="uploadFile = null; uploadName = ''">
+      <el-form label-width="100px">
+        <el-form-item label="压缩包" required>
+          <el-upload
+            :auto-upload="false"
+            :limit="1"
+            accept=".zip,.tar.gz,.tgz,.tar"
+            :on-change="(f) => { uploadFile = f?.raw }"
+          >
+            <el-button type="primary" plain>选择 .zip / .tar.gz / .tar</el-button>
+          </el-upload>
+          <div style="color:#909399;font-size:12px;margin-top:6px">最大 300MB，解压后将作为代码仓库用于分析</div>
+        </el-form-item>
+        <el-form-item label="仓库名称">
+          <el-input v-model="uploadName" placeholder="可选，默认用文件名" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showUpload = false">取消</el-button>
+        <el-button type="primary" @click="doUpload" :loading="uploading">上传并创建仓库</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -178,7 +210,7 @@ import { useModuleNames } from '../composables/useModuleNames.js'
 
 export default {
   name: 'AnalysisCreate',
-  components: { Plus, CaretRight },
+  components: { Plus, CaretRight, Upload },
   setup() {
     const { ANALYSIS_MODULES, getDisplayName, getDescription } = useModuleNames()
     return { ANALYSIS_MODULES, getDisplayName, getDescription }
@@ -199,7 +231,7 @@ export default {
         revision: { branch: 'main', base_commit: '', head_commit: '' },
         analyzers: ['branch_path', 'boundary_value', 'error_path', 'call_graph', 'data_flow', 'concurrency', 'diff_impact', 'coverage_map'],
         ai: { provider: savedProvider, model: savedModel, prompt_profile: 'default-v1' },
-        options: { max_files: 500, risk_threshold: 0.6, callgraph_depth: 12, enable_data_flow: true, enable_cross_module_ai: true },
+        options: { max_files: 500, risk_threshold: 0.6, callgraph_depth: 12, enable_data_flow: true, enable_cross_module_ai: true, mr_url: '' },
       },
       submitting: false,
       result: null,
@@ -207,6 +239,10 @@ export default {
       showNewRepo: false,
       newRepo: { name: '', git_url: '' },
       creatingRepo: false,
+      showUpload: false,
+      uploadFile: null,
+      uploadName: '',
+      uploading: false,
     }
   },
   computed: {
@@ -244,6 +280,10 @@ export default {
       } catch {
       }
     },
+    repoLabel(r) {
+      const name = r.name || r.git_url || ''
+      return r.git_url === 'upload' ? `📦 ${name}（上传）` : name
+    },
     async createRepo() {
       if (!this.newRepo.git_url) {
         this.$message.warning('请填写克隆地址')
@@ -263,6 +303,27 @@ export default {
         this.error = '创建仓库失败: ' + e.message
       } finally {
         this.creatingRepo = false
+      }
+    },
+    async doUpload() {
+      if (!this.uploadFile) {
+        this.$message.warning('请选择压缩包文件')
+        return
+      }
+      this.uploading = true
+      this.error = ''
+      try {
+        const repo = await api.uploadRepo(this.form.project_id, this.uploadFile, this.uploadName || null)
+        this.$message.success('上传解压成功，已创建仓库')
+        this.showUpload = false
+        this.uploadFile = null
+        this.uploadName = ''
+        await this.onProjectChange()
+        this.form.repo_id = repo.repo_id ?? repo.id
+      } catch (e) {
+        this.error = '上传失败: ' + e.message
+      } finally {
+        this.uploading = false
       }
     },
     async submit() {

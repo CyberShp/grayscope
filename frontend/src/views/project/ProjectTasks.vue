@@ -21,13 +21,29 @@
           <el-option label="差异" value="diff" />
           <el-option label="事后分析" value="postmortem" />
         </el-select>
+        <el-button
+          v-if="selectedTasks.length"
+          type="danger"
+          size="small"
+          @click="doBatchDelete"
+        >
+          删除选中 ({{ selectedTasks.length }})
+        </el-button>
       </div>
       <span class="gs-result-count">{{ filteredTasks.length }} 个任务</span>
     </div>
 
     <!-- 任务列表 -->
     <div class="gs-card">
-      <el-table :data="filteredTasks" size="small" class="gs-table" :default-sort="{ prop: 'created_at', order: 'descending' }">
+      <el-table
+        ref="taskTableRef"
+        :data="filteredTasks"
+        size="small"
+        class="gs-table"
+        :default-sort="{ prop: 'created_at', order: 'descending' }"
+        @selection-change="onSelectionChange"
+      >
+        <el-table-column type="selection" width="40" />
         <el-table-column label="任务ID" width="180">
           <template #default="{ row }">
             <router-link :to="`/tasks/${row.task_id}`" style="font-weight: 500; font-family: var(--gs-font-mono); font-size: 12px;">
@@ -64,12 +80,13 @@
           </template>
         </el-table-column>
         <el-table-column label="创建时间" width="160" prop="created_at" sortable>
-          <template #default="{ row }">{{ formatDate(row.created_at) }}</template>
+          <template #default="{ row }">{{ formatDate(row.created_at, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="120">
+        <el-table-column label="操作" width="160">
           <template #default="{ row }">
             <el-button text size="small" type="primary" @click="$router.push(`/tasks/${row.task_id}`)">详情</el-button>
             <el-button v-if="row.status === 'failed' || row.status === 'partial_failed'" text size="small" @click="retryTask(row)">重试</el-button>
+            <el-button text size="small" type="danger" @click="doDelete(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -80,8 +97,9 @@
 
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRiskColor } from '../../composables/useRiskColor.js'
+import { useFormatDate } from '../../composables/useFormatDate.js'
 import api from '../../api.js'
 
 const props = defineProps({
@@ -89,10 +107,13 @@ const props = defineProps({
 })
 
 const { riskColor, statusLabel } = useRiskColor()
+const { formatDate } = useFormatDate()
 
 const tasks = ref([])
 const filterStatus = ref(null)
 const filterType = ref(null)
+const selectedTasks = ref([])
+const taskTableRef = ref(null)
 
 const filteredTasks = computed(() => {
   let list = [...tasks.value]
@@ -106,9 +127,8 @@ function typeLabel(type) {
   return map[type] || type
 }
 
-function formatDate(d) {
-  if (!d) return '-'
-  return new Date(d).toLocaleString('zh-CN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+function onSelectionChange(rows) {
+  selectedTasks.value = rows
 }
 
 async function retryTask(task) {
@@ -118,6 +138,55 @@ async function retryTask(task) {
     await loadTasks()
   } catch (e) {
     ElMessage.error('重试失败: ' + e.message)
+  }
+}
+
+async function doDelete(task) {
+  try {
+    const preview = await api.deletePreview([task.task_id])
+    const msg = `确定要删除该任务吗？此操作不可恢复。\n\n将同时删除：\n` +
+      `- 风险发现：${preview.finding_count} 条\n` +
+      `- 测试用例：${preview.testcase_count} 条\n` +
+      `- 模块结果：${preview.module_result_count} 条\n` +
+      `- 导出记录：${preview.export_count} 条`
+    await ElMessageBox.confirm(msg, '删除确认', {
+      confirmButtonText: '确认删除',
+      cancelButtonText: '取消',
+      type: 'warning',
+    })
+    await api.deleteTask(task.task_id)
+    ElMessage.success('任务已删除')
+    await loadTasks()
+  } catch (e) {
+    if (e !== 'cancel' && e?.toString() !== 'cancel') {
+      ElMessage.error('删除失败: ' + (e.message || e))
+    }
+  }
+}
+
+async function doBatchDelete() {
+  const ids = selectedTasks.value.map(t => t.task_id)
+  if (!ids.length) return
+  try {
+    const preview = await api.deletePreview(ids)
+    const msg = `确定要删除选中的 ${ids.length} 个任务吗？此操作不可恢复。\n\n将同时删除：\n` +
+      `- 风险发现：${preview.finding_count} 条\n` +
+      `- 测试用例：${preview.testcase_count} 条\n` +
+      `- 模块结果：${preview.module_result_count} 条\n` +
+      `- 导出记录：${preview.export_count} 条`
+    await ElMessageBox.confirm(msg, '批量删除确认', {
+      confirmButtonText: '确认删除',
+      cancelButtonText: '取消',
+      type: 'warning',
+    })
+    await api.batchDeleteTasks(ids)
+    ElMessage.success(`已删除 ${ids.length} 个任务`)
+    selectedTasks.value = []
+    await loadTasks()
+  } catch (e) {
+    if (e !== 'cancel' && e?.toString() !== 'cancel') {
+      ElMessage.error('批量删除失败: ' + (e.message || e))
+    }
   }
 }
 

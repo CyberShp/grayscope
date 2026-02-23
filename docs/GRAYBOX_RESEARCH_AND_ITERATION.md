@@ -192,3 +192,101 @@
 | 9. 其它子功能重复 | 多模块 findings 合并；按 risk_score/related_functions 排序 |
 | 10. 回归再执行 7&8 | 导出说明「可复制加入回归套件」；covered 标记与覆盖率北向 |
 | （可选）性能/时序 | performance_requirement 字段；存储/实时场景可填「响应时间 &lt; Xms」 |
+
+---
+
+## 九、第三轮调研：底层分析逻辑重构（以多函数交互为锚点）
+
+本节基于前两轮调研与对当前实现的最新梳理，**不囿于「九大模块」**，以**底层分析逻辑的优化与深化**为主线，对分析层进行推翻、合并与重构建议。**唯一不动摇的核心**：**多函数交互（交汇临界点）**——灰盒价值在于用少量精准用例暴露多函数/多分支在同一场景下的不可接受结果，其余均可围绕此目标重组。
+
+### 9.1 原则
+
+- **多函数交互**：保留并加强。包括 (1) 发现中的 **related_functions**（谁参与这条风险链）；(2) 跨模块产出的 **critical_combinations**（多函数交汇临界点）；(3) 预期失败 vs 不可接受结果的灰盒三要素。
+- **其他**：九大功能、模块边界、编排顺序、发现形态均可**推翻、合并、重构**，以「是否服务于多函数交汇」与「分析深度」为评判标准。
+
+### 9.2 现状诊断
+
+| 维度 | 现状 |
+|------|------|
+| **原生产出 related_functions 的分析器** | **error_path**（cross_function_resource_leak）、**concurrency**（cross_function_race、cross_function_deadlock_risk）、**data_flow**（propagation_chain）、**diff_impact**（impacted_callers/callees）。这四类在 evidence 中显式写出关联函数。 |
+| **依赖导出层推导 related_functions** | **branch_path**、**boundary_value**、**call_graph** 的发现本身多为单符号；导出时 `_get_related_functions()` 从 evidence 的 callers/callees 或 data_flow 的 propagation_chain 推导，属于「事后补全」而非分析器内建的多函数视角。 |
+| **critical_combinations 来源** | 目前**仅由跨模块 AI**（synthesize_cross_module）产出，无基于调用图/发现图的**静态交汇计算**，可追溯性与确定性不足。 |
+| **编排与数量** | 已通过 max_findings_per_module、branch_path_reduce 控量；模块间通过 upstream 传递 call_graph/data_flow 等，但「多函数」视角仍集中在少数分析器与 AI 综合。 |
+
+结论：**真正支撑多函数交汇的底层能力**来自 (1) 调用图与数据流基础设施；(2) 在**调用链/传播链/并发访问/变更影响**上显式建模的分析器；(3) 将「发现对」或「路径交汇」显式计算的步骤（当前缺失）。单函数维度的分支/边界/错误路径分析可合并或降为「结构子层」，避免与「交汇」并列成同等权重模块。
+
+### 9.3 分层重构建议
+
+#### 第一层：结构基础（Infrastructure + 路径与资源）
+
+- **call_graph**  
+  - **定位**：纯基础设施，产出 **call_graph.json** 供下游使用；节点、边、callers/callees、call_sites。  
+  - **建议**：**不再产出** high_fan_out / deep_impact_surface 等「发现」（或迁至单独的「影响面」视图），避免与 diff_impact、data_flow 的「影响/传播」重复，并减少与多函数交汇无关的噪音。
+
+- **branch_path + error_path → 合并为「路径与资源」分析器（path_and_resource 或保留双名内部统一流水线）**  
+  - **理由**：二者均基于 CFG/控制流；branch_path 做分支分类（error/cleanup/boundary/state），error_path 做资源分配/释放、错误返回、**跨函数资源泄漏**。合并后可：  
+    - 一次遍历 CFG 同时产出「未覆盖错误/清理路径」「缺失清理」「错误码不一致」「静默吞错」与「跨函数资源泄漏」；  
+    - **related_functions** 仅在跨函数资源泄漏等真正多函数处写入，其余为单函数路径发现；  
+  - 对外可仍暴露为两个模块 ID（兼容）或统一为一个「路径与资源」模块，编排上视为同一阶段。
+
+#### 第二层：跨函数风险（核心分析）
+
+- **data_flow**  
+  - **保留并深化**：跨函数参数传播、外部输入→敏感操作、值域变换风险已直接贡献 related_functions（propagation_chain）。  
+  - **深化方向**：  
+    - 与 **call_graph** 结合，标注传播链上的**调用点**（call site）而不仅是函数名；  
+    - 与 **路径条件**（来自合并后的 path 分析）结合，区分「在何种分支条件下」该传播可达，便于生成更精准的用例与交汇描述。
+
+- **concurrency**  
+  - **保留**：已原生产出跨函数竞态、跨函数死锁风险，related_functions 明确。  
+  - **可选深化**：若有解析能力，补充线程拓扑（谁创建线程、哪些函数在何线程中执行），使交汇描述更具体。
+
+- **diff_impact**  
+  - **保留**：依赖 call_graph，产出变更函数与 impacted_callers/callees，天然多函数。  
+  - 与 call_graph 的职责划分：call_graph 只提供图；diff_impact 只做「变更 + 影响传播」，不重复「高扇出/深影响面」类发现。
+
+- **boundary_value**  
+  - **方案 A（推荐）**：**并入 data_flow**，作为「数据流 + 约束」子能力。边界本质是「值从哪来（传播）+ 在何处被约束（比较/数组访问）」；合并后 data_flow 同时产出 propagation_chain 与 boundary_miss / invalid_input_gap 类发现，related_functions 统一从传播链来。  
+  - **方案 B**：保留独立模块，但**仅产出与约束/边界相关的发现**，related_functions 由导出层从 data_flow 的 propagation_chain 按 symbol 关联补全，不单独维护一套边界「模块权重」。
+
+#### 第三层：叠加与反馈
+
+- **coverage_map**  
+  - **保留**：作为发现与覆盖率北向的叠加层，标记高风险低覆盖、关键路径未覆盖等，不改变底层分析逻辑。
+
+- **postmortem / knowledge_pattern**  
+  - **保留**：反馈闭环与知识沉淀，依赖缺陷元数据与上游发现，不参与「九大」结构重组。
+
+### 9.4 交汇临界点的静态化（关键新增）
+
+- **问题**：当前 critical_combinations 完全由 AI 从各模块发现文本中「归纳」，无基于图结构的确定性步骤。  
+- **建议**：增加 **静态交汇步骤**（在跨模块 AI 之前或与之并行）：  
+  1. 输入：call_graph 产物 + 所有模块的 findings（含 symbol_name、evidence.callers/callees、evidence.related_functions、evidence.propagation_chain 等）。  
+  2. 计算：  
+     - 同一函数上的多条发现 → 该函数为交汇点；  
+     - 同一条调用链上的发现 → 链上函数集为候选交汇；  
+     - 同一 propagation_chain 上的发现 → 链为候选交汇；  
+     - 已有 related_functions 的发现 → 直接加入候选。  
+  3. 输出：**候选 critical_combinations**（related_functions、涉及 finding_id 列表、可选 scenario_brief 占位）。  
+  4. AI 角色：对候选进行**排序、合并、补全预期失败/不可接受结果与自然语言描述**，而非从零发明。  
+- 这样「多函数交汇」先有**可追溯的图源与发现源**，再有人工智能增强，符合灰盒可解释性。
+
+### 9.5 模块视图的收敛（对外不必再强调「九大」）
+
+- **结构层**：call_graph（仅基础设施），path_and_resource（branch_path + error_path 合并）。  
+- **跨函数风险层**：data_flow（可选合并 boundary_value），concurrency，diff_impact。  
+- **叠加层**：coverage_map。  
+- **反馈层**：postmortem，knowledge_pattern。  
+
+对外可表述为「**以多函数交汇为核心的分析管线**」：结构 → 跨函数风险 → 静态交汇候选 → AI 综合 → 用例与导出；模块数量与命名可按实现阶段逐步迁移，无需一步到位。
+
+### 9.6 实施优先级建议
+
+| 优先级 | 内容 |
+|--------|------|
+| P0 | **静态交汇步骤**：在编排器中增加「从 call_graph + findings 生成候选 critical_combinations」的步骤，AI 仅做排序与补全。 |
+| P1 | **call_graph 发现裁剪**：high_fan_out / deep_impact_surface 改为可选或移除，或迁至「影响面」聚合视图，减少噪音。 |
+| P2 | **path_and_resource 合并**：将 branch_path 与 error_path 合并为单一分析流水线（内部可仍保留两个 module_id 兼容），统一 CFG 与资源/错误路径分析。 |
+| P3 | **data_flow 深化**：传播链与 call_graph 调用点、路径条件结合；boundary_value 并入 data_flow（方案 A）或明确其仅产出约束发现并由 data_flow 补全 related_functions（方案 B）。 |
+
+以上为基于底层分析逻辑的持续调研与迭代方向，**多函数交互**为唯一不变锚点，其余均可围绕其推翻、合并与重构。

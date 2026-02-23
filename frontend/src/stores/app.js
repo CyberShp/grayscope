@@ -24,6 +24,22 @@ export const useAppStore = defineStore('app', () => {
     currentProject.value = project
   }
 
+  // ── 部署环境时区（用于时间展示，由 GET /settings 下发）────────────
+  const displayTimezone = ref('Asia/Shanghai')
+  let settingsFetched = false
+
+  async function fetchSettings() {
+    if (settingsFetched) return
+    try {
+      const data = await api.getSettings()
+      const tz = data?.system?.display_timezone
+      if (tz) displayTimezone.value = tz
+      settingsFetched = true
+    } catch {
+      settingsFetched = true
+    }
+  }
+
   // ── 系统状态 ──────────────────────────
   async function checkHealth() {
     try {
@@ -45,9 +61,11 @@ export const useAppStore = defineStore('app', () => {
     loading,
     projects,
     currentProject,
+    displayTimezone,
+    fetchSettings,
+    checkHealth,
     fetchProjects,
     setCurrentProject,
-    checkHealth,
     getProjectById,
   }
 })

@@ -76,7 +76,7 @@
 
         <div class="gs-project-card-footer">
           <span class="gs-project-card-time">
-            {{ p.summary?.last_analysis_at ? formatDate(p.summary.last_analysis_at) : (p.created_at ? formatDate(p.created_at) : '暂无分析') }}
+            {{ p.summary?.last_analysis_at ? formatDateShort(p.summary.last_analysis_at) : (p.created_at ? formatDateShort(p.created_at) : '暂无分析') }}
           </span>
         </div>
       </div>
@@ -112,7 +112,7 @@
         </el-table-column>
         <el-table-column label="最近分析" width="160">
           <template #default="{ row }">
-            {{ row.summary?.last_analysis_at ? formatDate(row.summary.last_analysis_at) : formatDate(row.created_at) }}
+            {{ row.summary?.last_analysis_at ? formatDateShort(row.summary.last_analysis_at) : formatDateShort(row.created_at) }}
           </template>
         </el-table-column>
       </el-table>
@@ -148,6 +148,7 @@ import { Search as SearchIcon } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { useAppStore } from '../stores/app.js'
 import { useRiskColor } from '../composables/useRiskColor.js'
+import { useFormatDate } from '../composables/useFormatDate.js'
 import api from '../api.js'
 
 const router = useRouter()
@@ -191,10 +192,8 @@ function gateLabel(p) {
   return p.summary.quality_gate_status === 'pass' ? '通过' : '未通过'
 }
 
-function formatDate(d) {
-  if (!d) return '-'
-  return new Date(d).toLocaleString('zh-CN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
-}
+const { formatDate } = useFormatDate()
+const formatDateShort = (d) => formatDate(d, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
 
 async function createProject() {
   creating.value = true

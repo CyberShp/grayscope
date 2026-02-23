@@ -109,8 +109,9 @@ def _findings_to_testcases(
     task_id: str,
     all_findings: list[dict[str, Any]],
     ai_data: dict[str, Any],
+    symbol_to_related: dict[str, list[str]] | None = None,
 ) -> list[dict[str, Any]]:
-    """将发现转换为结构化测试用例建议。"""
+    """将发现转换为结构化测试用例建议。symbol_to_related 用于 P3：由 data_flow 为 boundary 等补全 related_functions。"""
     cases: list[dict[str, Any]] = []
     tc_id = 0
 
@@ -128,7 +129,7 @@ def _findings_to_testcases(
         execution_hint = _risk_type_to_execution_hint(risk_type, f)
         example_input = _risk_type_to_example_input(risk_type, f)
         fault_window = _risk_type_to_fault_window(risk_type, f)
-        related_functions = _get_related_functions(f)
+        related_functions = _get_related_functions(f, symbol_to_related)
         expected_failure = _get_expected_failure(risk_type, f)
         unacceptable_outcomes = _get_unacceptable_outcomes(risk_type, f)
         performance_requirement = _get_performance_requirement(f)
@@ -180,8 +181,34 @@ def _findings_to_testcases(
     return cases
 
 
-def _get_related_functions(finding: dict) -> list[str]:
-    """从 evidence 提取关联函数列表（多函数交汇临界点）。优先显式字段，否则从调用链/数据流推导。"""
+def _build_symbol_to_related_from_data_flow(module_results: list) -> dict[str, list[str]]:
+    """P3: 从 data_flow / path_and_resource 等模块的 propagation_chain 构建 symbol -> related_functions。"""
+    out: dict[str, list[str]] = {}
+    for r in module_results or []:
+        if not r.findings_json:
+            continue
+        try:
+            findings = json.loads(r.findings_json)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        for f in findings:
+            ev = f.get("evidence", {}) or {}
+            chain = ev.get("propagation_chain") or []
+            if not isinstance(chain, list) or len(chain) < 2:
+                continue
+            funcs = [s.get("function") for s in chain if isinstance(s, dict) and s.get("function")]
+            if len(funcs) < 2:
+                continue
+            for fn in funcs:
+                if fn and fn not in (out.get(fn) or []):
+                    out.setdefault(fn, []).extend(x for x in funcs if x and x != fn)
+    for k in out:
+        out[k] = list(dict.fromkeys(out[k]))[:8]
+    return out
+
+
+def _get_related_functions(finding: dict, symbol_to_related: dict[str, list[str]] | None = None) -> list[str]:
+    """从 evidence 提取关联函数列表（多函数交汇临界点）。优先显式字段，否则从调用链/数据流推导；P3 可用 symbol_to_related 补全 boundary 等。"""
     ev = finding.get("evidence", {})
     related = ev.get("related_functions") or ev.get("interaction_chain") or ev.get("cross_function_chain")
     if isinstance(related, list):
@@ -193,6 +220,11 @@ def _get_related_functions(finding: dict) -> list[str]:
         if out:
             return out
     sym = finding.get("symbol_name", "")
+    # P3: 由 data_flow 传播链补全（如 boundary_value 等单符号发现）
+    if symbol_to_related and sym and sym in symbol_to_related:
+        cand = symbol_to_related[sym]
+        if len(cand) >= 1:
+            return [sym] + [x for x in cand if x != sym][:5]
     # 从 call_graph: callers + self + callees
     callers = ev.get("callers") or []
     callees = ev.get("callees") or []
@@ -200,7 +232,7 @@ def _get_related_functions(finding: dict) -> list[str]:
         combined = list(dict.fromkeys([*callers[:3], sym, *callees[:3]]))
         if len(combined) > 1:
             return [x for x in combined if x]
-    # 从 data_flow propagation_chain
+    # 从 data_flow propagation_chain（本发现自身）
     chain = ev.get("propagation_chain") or []
     if isinstance(chain, list) and chain:
         funcs = [s.get("function") for s in chain if isinstance(s, dict) and s.get("function")]
@@ -469,7 +501,8 @@ def export_json(db: Session, task_id: str) -> str:
         if r.ai_summary_json:
             ai_data[r.module_id] = json.loads(r.ai_summary_json)
 
-    cases = _findings_to_testcases(task_id, all_findings, ai_data)
+    symbol_to_related = _build_symbol_to_related_from_data_flow(results)
+    cases = _findings_to_testcases(task_id, all_findings, ai_data, symbol_to_related)
     critical_list = _get_cross_module_critical_combinations(task)
     critical_export = [
         _critical_combination_to_export_item(cc, i, task_id)
@@ -511,7 +544,8 @@ def export_csv(db: Session, task_id: str) -> str:
         if r.ai_summary_json:
             ai_data[r.module_id] = json.loads(r.ai_summary_json)
 
-    cases = _findings_to_testcases(task_id, all_findings, ai_data)
+    symbol_to_related = _build_symbol_to_related_from_data_flow(results)
+    cases = _findings_to_testcases(task_id, all_findings, ai_data, symbol_to_related)
     critical_list = _get_cross_module_critical_combinations(task)
     critical_export = [
         _critical_combination_to_export_item(cc, i, task_id)
@@ -601,7 +635,8 @@ def export_markdown(db: Session, task_id: str) -> str:
         if r.ai_summary_json:
             ai_data[r.module_id] = json.loads(r.ai_summary_json)
 
-    cases = _findings_to_testcases(task_id, all_findings, ai_data)
+    symbol_to_related = _build_symbol_to_related_from_data_flow(results)
+    cases = _findings_to_testcases(task_id, all_findings, ai_data, symbol_to_related)
     critical_list = _get_cross_module_critical_combinations(task)
     critical_export = [
         _critical_combination_to_export_item(cc, i, task_id)

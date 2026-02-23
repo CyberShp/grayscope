@@ -101,7 +101,7 @@
           </template>
         </el-table-column>
         <el-table-column label="时间" width="160">
-          <template #default="{ row }">{{ formatDate(row.created_at) }}</template>
+          <template #default="{ row }">{{ formatDateShort(row.created_at) }}</template>
         </el-table-column>
       </el-table>
       <el-empty v-if="!recentTasks.length" description="暂无分析任务" :image-size="60" />
@@ -118,6 +118,7 @@ import { GridComponent, TooltipComponent } from 'echarts/components'
 import VChart from 'vue-echarts'
 import { useRiskColor } from '../../composables/useRiskColor.js'
 import { useModuleNames } from '../../composables/useModuleNames.js'
+import { useFormatDate } from '../../composables/useFormatDate.js'
 import api from '../../api.js'
 
 use([CanvasRenderer, LineChart, GridComponent, TooltipComponent])
@@ -185,10 +186,8 @@ const trendOption = computed(() => {
   }
 })
 
-function formatDate(d) {
-  if (!d) return '-'
-  return new Date(d).toLocaleString('zh-CN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
-}
+const { formatDate } = useFormatDate()
+const formatDateShort = (d) => formatDate(d, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
 
 async function loadData() {
   try {

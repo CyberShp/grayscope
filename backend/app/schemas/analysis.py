@@ -29,12 +29,23 @@ class AnalysisAI(BaseModel):
     prompt_profile: str = "default-v1"
 
 
+class MrDiffFile(BaseModel):
+    """MR/PR 单文件变更：修改前与修改后内容，供「代码变更」板块展示。"""
+    path: str = ""
+    old_content: Optional[str] = None
+    new_content: Optional[str] = None
+    unified_diff: Optional[str] = None  # 可选：直接存 unified diff 文本
+
+
 class AnalysisOptions(BaseModel):
     callgraph_depth: int = Field(default=12, ge=1, le=20)
     max_files: int = Field(default=500, ge=1)
     risk_threshold: float = Field(default=0.6, ge=0.0, le=1.0)
     enable_data_flow: bool = True
     enable_cross_module_ai: bool = True
+    # MR/PR 代码变更（可选）：链接与修改前/后内容，供前端「MR 代码变更」板块展示
+    mr_url: Optional[str] = Field(default=None, max_length=2048)
+    mr_diff: Optional[list[dict[str, Any]]] = None  # [{ path, old_content?, new_content?, unified_diff? }]
 
 
 SUPPORTED_MODULES = {
@@ -59,6 +70,12 @@ class TaskCreateRequest(BaseModel):
 
 class RetryRequest(BaseModel):
     modules: list[str] = []
+
+
+class TaskMrUpdate(BaseModel):
+    """更新任务关联的 MR/PR 链接与代码变更（供「MR 代码变更」板块展示）。"""
+    mr_url: Optional[str] = Field(default=None, max_length=2048)
+    mr_diff: Optional[list[dict[str, Any]]] = None  # [{ path, old_content?, new_content?, unified_diff? }]
 
 
 class CoverageImportRequest(BaseModel):
@@ -97,6 +114,7 @@ class TaskStatusOut(BaseModel):
     created_at: datetime
     updated_at: datetime
     error_json: Optional[str] = None  # 含 cross_module_ai 等扩展，供前端展示多函数交汇临界点
+    options: Optional[dict[str, Any]] = None  # 含 mr_url、mr_diff 等，供前端「MR 代码变更」板块
 
 
 class ModuleResultSummary(BaseModel):

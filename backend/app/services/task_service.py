@@ -97,6 +97,13 @@ def get_task_status(db: Session, task_id: str) -> TaskStatusOut:
     finished = sum(1 for r in results if r.status in ("success", "failed", "skipped"))
     failed = sum(1 for r in results if r.status == "failed")
 
+    options_dict = None
+    if task.options_json:
+        try:
+            options_dict = json.loads(task.options_json)
+        except (TypeError, json.JSONDecodeError):
+            pass
+
     return TaskStatusOut(
         task_id=task.task_id,
         project_id=task.project_id,
@@ -112,6 +119,7 @@ def get_task_status(db: Session, task_id: str) -> TaskStatusOut:
         created_at=task.created_at,
         updated_at=task.updated_at,
         error_json=task.error_json,
+        options=options_dict,
     )
 
 

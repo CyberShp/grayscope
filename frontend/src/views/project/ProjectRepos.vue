@@ -38,7 +38,7 @@
         </el-table-column>
         <el-table-column label="最近同步" width="160">
           <template #default="{ row }">
-            {{ row.last_sync_at ? formatDate(row.last_sync_at) : '-' }}
+            {{ row.last_sync_at ? formatDateShort(row.last_sync_at) : '-' }}
           </template>
         </el-table-column>
         <el-table-column label="鉴权" width="90" align="center">
@@ -143,6 +143,7 @@
 import { ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh, Delete, EditPen } from '@element-plus/icons-vue'
+import { useFormatDate } from '../../composables/useFormatDate.js'
 import api from '../../api.js'
 
 const props = defineProps({
@@ -172,9 +173,9 @@ function syncLabel(status) {
   return map[status] || status || '未同步'
 }
 
-function formatDate(d) {
-  if (!d) return '-'
-  return new Date(d).toLocaleString('zh-CN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+const { formatDate } = useFormatDate()
+function formatDateShort(d) {
+  return formatDate(d, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
 }
 
 async function loadRepos() {

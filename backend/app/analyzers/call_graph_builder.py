@@ -368,74 +368,77 @@ def analyze(ctx: AnalyzeContext) -> ModuleResult:
 
     cg, warnings = build_callgraph(workspace, target_path, max_files)
 
+    # P1: 发现裁剪 — 高扇出/深影响面改为可选，默认不产出以减少噪音（调用图仅作基础设施）
+    emit_findings = options.get("call_graph_emit_findings", False)
+
     findings: list[dict[str, Any]] = []
     fid = 0
 
-    # Find high fan-out functions (potential impact hubs)
-    for fn in sorted(cg.nodes):
-        fo = cg.fan_out(fn)
-        fi = cg.fan_in(fn)
+    if emit_findings:
+        # Find high fan-out functions (potential impact hubs)
+        for fn in sorted(cg.nodes):
+            fo = cg.fan_out(fn)
+            fi = cg.fan_in(fn)
 
-        if fo >= 8:
-            fid += 1
-            findings.append({
-                "finding_id": f"CG-F{fid:04d}",
-                "module_id": MODULE_ID,
-                "risk_type": "high_fan_out",
-                "severity": "S2",
-                "risk_score": min(0.5 + fo * 0.03, 0.9),
-                "title": f"高扇出枢纽函数: {fn}() 调用了 {fo} 个函数",
-                "description": (
-                    f"函数 {fn}() 的调用扇出度为 {fo}，意味着它直接依赖 {fo} 个其他函数。"
-                    f"这使得 {fn}() 成为一个关键的集成枢纽，任何被调用函数的接口变更或行为改变"
-                    f"都可能影响 {fn}() 的正确性。需要：(1) 为 {fn}() 建立集成测试覆盖所有调用路径；"
-                    f"(2) 当任一被调用函数变更时对 {fn}() 进行回归测试。"
-                ),
-                "file_path": cg.function_files.get(fn, ""),
-                "symbol_name": fn,
-                "line_start": cg.function_lines.get(fn, (0, 0))[0],
-                "line_end": cg.function_lines.get(fn, (0, 0))[1],
-                "evidence": {
-                    "fan_out": fo,
-                    "fan_in": fi,
-                    "callees": sorted(cg.edges.get(fn, set()))[:20],
-                    "params": cg.function_params.get(fn, []),
-                },
-            })
+            if fo >= 8:
+                fid += 1
+                findings.append({
+                    "finding_id": f"CG-F{fid:04d}",
+                    "module_id": MODULE_ID,
+                    "risk_type": "high_fan_out",
+                    "severity": "S2",
+                    "risk_score": min(0.5 + fo * 0.03, 0.9),
+                    "title": f"高扇出枢纽函数: {fn}() 调用了 {fo} 个函数",
+                    "description": (
+                        f"函数 {fn}() 的调用扇出度为 {fo}，意味着它直接依赖 {fo} 个其他函数。"
+                        f"这使得 {fn}() 成为一个关键的集成枢纽，任何被调用函数的接口变更或行为改变"
+                        f"都可能影响 {fn}() 的正确性。需要：(1) 为 {fn}() 建立集成测试覆盖所有调用路径；"
+                        f"(2) 当任一被调用函数变更时对 {fn}() 进行回归测试。"
+                    ),
+                    "file_path": cg.function_files.get(fn, ""),
+                    "symbol_name": fn,
+                    "line_start": cg.function_lines.get(fn, (0, 0))[0],
+                    "line_end": cg.function_lines.get(fn, (0, 0))[1],
+                    "evidence": {
+                        "fan_out": fo,
+                        "fan_in": fi,
+                        "callees": sorted(cg.edges.get(fn, set()))[:20],
+                        "params": cg.function_params.get(fn, []),
+                    },
+                })
 
-        if fi >= 10:
-            fid += 1
-            # 获取调用链信息
-            caller_chains = cg.get_call_chains(fn, direction="callers", max_depth=6)
-            longest_chain = max(caller_chains, key=len) if caller_chains else []
+            if fi >= 10:
+                fid += 1
+                caller_chains = cg.get_call_chains(fn, direction="callers", max_depth=6)
+                longest_chain = max(caller_chains, key=len) if caller_chains else []
 
-            findings.append({
-                "finding_id": f"CG-F{fid:04d}",
-                "module_id": MODULE_ID,
-                "risk_type": "deep_impact_surface",
-                "severity": "S2",
-                "risk_score": min(0.5 + fi * 0.02, 0.85),
-                "title": f"高扇入关键函数: {fn}() 被 {fi} 个函数调用",
-                "description": (
-                    f"函数 {fn}() 的调用扇入度为 {fi}，意味着有 {fi} 个不同的函数依赖于它。"
-                    f"对 {fn}() 的任何修改（参数变更、返回值语义变化、新增错误路径）都可能"
-                    f"影响所有 {fi} 个调用者的正确性。"
-                    + (f"最长调用链: {' → '.join(longest_chain)}。" if longest_chain else "")
-                    + f"需要：(1) 对 {fn}() 的接口契约进行严格测试；"
-                    f"(2) 修改前评估对所有调用者的影响；(3) 变更后运行全量回归测试。"
-                ),
-                "file_path": cg.function_files.get(fn, ""),
-                "symbol_name": fn,
-                "line_start": cg.function_lines.get(fn, (0, 0))[0],
-                "line_end": cg.function_lines.get(fn, (0, 0))[1],
-                "evidence": {
-                    "fan_out": fo,
-                    "fan_in": fi,
-                    "callers": sorted(cg.reverse.get(fn, set()))[:20],
-                    "caller_chains": [c[:8] for c in caller_chains[:5]],  # 最多5条链，每条最多8层
-                    "params": cg.function_params.get(fn, []),
-                },
-            })
+                findings.append({
+                    "finding_id": f"CG-F{fid:04d}",
+                    "module_id": MODULE_ID,
+                    "risk_type": "deep_impact_surface",
+                    "severity": "S2",
+                    "risk_score": min(0.5 + fi * 0.02, 0.85),
+                    "title": f"高扇入关键函数: {fn}() 被 {fi} 个函数调用",
+                    "description": (
+                        f"函数 {fn}() 的调用扇入度为 {fi}，意味着有 {fi} 个不同的函数依赖于它。"
+                        f"对 {fn}() 的任何修改（参数变更、返回值语义变化、新增错误路径）都可能"
+                        f"影响所有 {fi} 个调用者的正确性。"
+                        + (f"最长调用链: {' → '.join(longest_chain)}。" if longest_chain else "")
+                        + f"需要：(1) 对 {fn}() 的接口契约进行严格测试；"
+                        f"(2) 修改前评估对所有调用者的影响；(3) 变更后运行全量回归测试。"
+                    ),
+                    "file_path": cg.function_files.get(fn, ""),
+                    "symbol_name": fn,
+                    "line_start": cg.function_lines.get(fn, (0, 0))[0],
+                    "line_end": cg.function_lines.get(fn, (0, 0))[1],
+                    "evidence": {
+                        "fan_out": fo,
+                        "fan_in": fi,
+                        "callers": sorted(cg.reverse.get(fn, set()))[:20],
+                        "caller_chains": [c[:8] for c in caller_chains[:5]],
+                        "params": cg.function_params.get(fn, []),
+                    },
+                })
 
     graph_dict = cg.to_dict()
     risk = round(sum(f["risk_score"] for f in findings) / len(findings), 4) if findings else 0.0

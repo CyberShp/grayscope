@@ -70,6 +70,7 @@ function isNavActive(item) {
 }
 
 onMounted(() => {
+  appStore.fetchSettings() // 部署环境时区，用于时间展示
   appStore.checkHealth()
   appStore.fetchProjects()
 })

@@ -63,11 +63,17 @@ MODULE_REGISTRY: dict[str, dict[str, Any]] = {
         "description": "从事后分析结果中提取可复用的缺陷模式，归一化存储，支持相似度匹配",
         "category": "反馈闭环",
     },
+    "path_and_resource": {
+        "display_name": "路径与资源",
+        "description": "合并分支路径与错误路径分析，一次产出路径分类与资源/错误处理发现（可替代 branch_path + error_path）",
+        "category": "静态分析",
+    },
 }
 
 # ── 分析任务支持的模块集合（不含事后分析模块） ──────────────────────────
 ANALYSIS_MODULES = [
     "branch_path", "boundary_value", "error_path", "call_graph",
+    "path_and_resource",
     "data_flow", "concurrency", "diff_impact", "coverage_map",
 ]
 

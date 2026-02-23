@@ -1,12 +1,16 @@
-from fastapi import APIRouter, Depends, Query
+from typing import Optional
+
+from fastapi import APIRouter, Depends, File, Query, UploadFile
 from sqlalchemy.orm import Session
 from starlette.status import HTTP_201_CREATED
 
 from app.core.database import get_db
+from app.core.exceptions import InvalidRequestError
 from app.core.response import ok
 from app.schemas.project import ProjectCreate
 from app.schemas.repository import RepoCreate, RepoUpdate
 from app.services import project_service
+from app.services.upload_service import create_repo_from_upload
 
 router = APIRouter()
 
@@ -55,6 +59,28 @@ def add_repo(
 ) -> dict:
     out = project_service.add_repo(db, project_id, req)
     return ok(out.model_dump())
+
+
+@router.post("/projects/{project_id}/repos/upload", status_code=HTTP_201_CREATED)
+def upload_repo(
+    project_id: int,
+    file: UploadFile = File(..., description="压缩包：.zip / .tar.gz / .tar"),
+    name: Optional[str] = Query(default=None, description="仓库显示名称，默认用文件名"),
+    db: Session = Depends(get_db),
+) -> dict:
+    """上传代码压缩包，解压后创建为仓库（代码来源=上传），可直接用于新建分析任务。"""
+    if not file.filename:
+        raise InvalidRequestError("请选择压缩包文件")
+    content = file.file.read()
+    import io
+    out = create_repo_from_upload(
+        db,
+        project_id=project_id,
+        file=io.BytesIO(content),
+        filename=file.filename,
+        repo_name=name,
+    )
+    return ok(out, message="上传解压成功，已创建仓库")
 
 
 @router.patch("/projects/{project_id}/repos/{repo_id}")

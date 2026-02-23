@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.core.exceptions import NotFoundError, RepoSyncFailedError
 from app.repositories import repository_repo
+from app.services.upload_service import UPLOAD_REPO_GIT_URL
 from app.utils.id_gen import sync_id
 
 logger = logging.getLogger(__name__)
@@ -54,6 +55,13 @@ def sync_repo(
     sid = sync_id()
     mirror = Path(repo.local_mirror_path)
     revision = commit or tag or branch or repo.default_branch
+
+    # 上传压缩包创建的仓库无需 clone，直接视为已就绪
+    if repo.git_url == UPLOAD_REPO_GIT_URL:
+        if not mirror.exists():
+            raise RepoSyncFailedError("上传代码目录不存在")
+        repository_repo.update_sync_status(db, repo_id, "success")
+        return {"sync_id": sid, "repo_id": repo_id, "status": "success"}
 
     clone_url = repo.git_url
     env = os.environ.copy()

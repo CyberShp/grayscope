@@ -38,6 +38,15 @@ export default {
   // ── 仓库 ──────────────────────────────
   listRepos: (projectId) => request('GET', `/projects/${projectId}/repos`),
   createRepo: (projectId, body) => request('POST', `/projects/${projectId}/repos`, body),
+  uploadRepo: async (projectId, file, name = null) => {
+    const form = new FormData()
+    form.append('file', file)
+    const url = `${BASE}/projects/${projectId}/repos/upload${name ? `?name=${encodeURIComponent(name)}` : ''}`
+    const res = await fetch(url, { method: 'POST', body: form })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.message || res.statusText)
+    return data.data !== undefined ? data.data : data
+  },
   updateRepo: (projectId, repoId, body) => request('PATCH', `/projects/${projectId}/repos/${repoId}`, body),
   syncRepo: (repoId, body = {}) => request('POST', `/repos/${repoId}/sync`, {
     revision: { branch: body.branch || 'main', tag: body.tag || null, commit: body.commit || null },
@@ -48,7 +57,11 @@ export default {
   createTask: (body) => request('POST', '/analysis/tasks', body),
   getTaskStatus: (taskId) => request('GET', `/analysis/tasks/${taskId}`),
   getTaskResults: (taskId) => request('GET', `/analysis/tasks/${taskId}/results`),
+  updateTaskMr: (taskId, body) => request('PATCH', `/analysis/tasks/${taskId}/mr`, body),
   exportUrl: (taskId, fmt = 'json') => `${BASE}/analysis/tasks/${taskId}/export?fmt=${fmt}`,
+  deleteTask: (taskId) => request('DELETE', `/analysis/tasks/${taskId}`),
+  deletePreview: (taskIds) => request('POST', '/analysis/tasks/delete-preview', { task_ids: taskIds }),
+  batchDeleteTasks: (taskIds) => request('POST', '/analysis/tasks/batch-delete', { task_ids: taskIds }),
   retryTask: (taskId, body) => request('POST', `/analysis/tasks/${taskId}/retry`, body),
   cancelTask: (taskId) => request('POST', `/analysis/tasks/${taskId}/cancel`, {}),
 

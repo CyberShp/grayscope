@@ -276,10 +276,12 @@ def synthesize_cross_module(
     all_module_results: dict[str, dict],
     source_snippets: dict[str, str],
     ai_config: dict,
+    candidate_combinations: list[dict] | None = None,
 ) -> dict:
     """跨模块综合分析: 结合所有分析器的发现，生成全局视角的测试建议。
 
     在所有模块完成后调用，提供跨模块关联分析和端到端测试建议。
+    若传入 candidate_combinations（静态交汇候选），将纳入提示由 AI 排序/补全，并合并入最终 test_suggestions。
     """
     provider_name = ai_config.get("provider", "ollama")
     model = ai_config.get("model", "qwen2.5-coder")
@@ -355,8 +357,17 @@ def synthesize_cross_module(
         f"**模块分析概要:**\n" + "\n".join(module_summaries) + "\n\n"
         f"**数据流传播链（参数如何跨函数传播）:**\n{chains_text}\n\n"
         f"**所有高风险发现（跨模块汇总，按风险排序）:**\n{top_findings_text[:4000]}\n\n"
-        f"**代码片段:**\n"
     )
+    if candidate_combinations:
+        candidates_text = json.dumps(
+            [{"related_functions": c.get("related_functions"), "finding_ids": c.get("finding_ids", []), "source": c.get("source", "")} for c in candidate_combinations[:30]],
+            indent=2,
+            ensure_ascii=False,
+        )
+        user_msg += (
+            f"**静态交汇候选（基于调用图与发现图计算，请在此基础上排序、合并、补全 expected_outcome / unacceptable_outcomes / scenario_brief）:**\n{candidates_text[:3000]}\n\n"
+        )
+    user_msg += "**代码片段:**\n"
 
     for fn_name, src in list(source_snippets.items())[:3]:
         user_msg += f"\n// --- {fn_name} ---\n{src[:1500]}\n"
@@ -386,12 +397,15 @@ def synthesize_cross_module(
 
     ai_content = ai_result.get("content", "")
     test_suggestions = _extract_test_suggestions(ai_content)
+    test_suggestions = _merge_static_candidates_into_suggestions(
+        test_suggestions, candidate_combinations or []
+    )
 
     if not ai_result.get("success"):
         err_msg = ai_result.get("error", "未知错误")
         return {
             "ai_summary": f"跨模块综合分析失败: {err_msg}",
-            "test_suggestions": [],
+            "test_suggestions": test_suggestions,
             "success": False,
             "error": err_msg,
             "usage": ai_result.get("usage", {}),
@@ -407,6 +421,37 @@ def synthesize_cross_module(
         "provider": provider_name,
         "model": model,
     }
+
+
+def _merge_static_candidates_into_suggestions(
+    test_suggestions: list[dict],
+    candidate_combinations: list[dict],
+) -> list[dict]:
+    """将静态交汇候选合并入 test_suggestions；AI 已返回同 related_functions 的不重复添加。"""
+    if not candidate_combinations:
+        return test_suggestions
+    key_from_suggestion = lambda s: tuple(sorted(s.get("related_functions") or []))
+    ai_keys = {key_from_suggestion(s) for s in test_suggestions if key_from_suggestion(s)}
+    out = list(test_suggestions)
+    for c in candidate_combinations:
+        related = c.get("related_functions") or []
+        if len(related) < 2:
+            continue
+        key = tuple(sorted(related))
+        if key in ai_keys:
+            continue
+        ai_keys.add(key)
+        out.append({
+            "type": "critical_combination",
+            "related_functions": related,
+            "expected_outcome": c.get("expected_outcome") or "",
+            "expected_failure": c.get("expected_failure") or "",
+            "unacceptable_outcomes": c.get("unacceptable_outcomes") or [],
+            "scenario_brief": c.get("scenario_brief") or "",
+            "finding_ids": c.get("finding_ids", []),
+            "source": c.get("source", "static"),
+        })
+    return out
 
 
 def _extract_test_suggestions(ai_content: str) -> list[dict]:

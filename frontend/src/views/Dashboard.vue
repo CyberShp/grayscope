@@ -123,6 +123,7 @@ import { Plus, FolderOpened, DataAnalysis, Warning, TrendCharts } from '@element
 import api from '../api.js'
 import { useRiskColor } from '../composables/useRiskColor.js'
 import { useModuleNames } from '../composables/useModuleNames.js'
+import { useFormatDate } from '../composables/useFormatDate.js'
 
 use([CanvasRenderer, PieChart, BarChart, TitleComponent, TooltipComponent, LegendComponent, GridComponent])
 
@@ -132,7 +133,8 @@ export default {
   setup() {
     const { riskColor, statusType, statusLabel } = useRiskColor()
     const { getDisplayName } = useModuleNames()
-    return { riskColor, statusType, statusLabel, getDisplayName }
+    const { formatDate } = useFormatDate()
+    return { riskColor, statusType, statusLabel, getDisplayName, formatDate }
   },
   data() {
     return {
@@ -205,10 +207,6 @@ export default {
       } catch (e) {
         this.$message.error('创建失败: ' + e.message)
       } finally { this.creating = false }
-    },
-    formatDate(d) {
-      if (!d) return '-'
-      return new Date(d).toLocaleString('zh-CN')
     },
   },
 }

@@ -492,6 +492,94 @@
           </div>
         </el-tab-pane>
 
+        <!-- MR 代码变更（与本次任务分析关联：MR 变更文件即本仓库中的变更，与发现联动） -->
+        <el-tab-pane label="MR 代码变更" name="mr">
+          <div class="gs-mr-block">
+            <div class="gs-mr-intro">
+              <p style="font-size:12px;color:var(--gs-text-muted);margin-bottom:12px;">
+                MR/PR 中的代码变更通常属于<strong>当前分析任务所在项目/仓库</strong>。下方会关联本次任务的发现：标出「MR 涉及文件」及「与 MR 变更文件相关的发现」，便于针对 MR 做灰盒测试设计。
+              </p>
+            </div>
+            <div v-if="taskOptions?.mr_url || (taskOptions?.mr_diff && taskOptions.mr_diff.length)" class="gs-mr-display">
+              <div class="gs-mr-section">
+                <div class="gs-ai-section-title">MR/PR 链接</div>
+                <p v-if="taskOptions?.mr_url">
+                  <a :href="taskOptions.mr_url" target="_blank" rel="noopener" class="gs-mr-link">{{ taskOptions.mr_url }}</a>
+                </p>
+                <p v-else class="gs-text-muted">未填写</p>
+              </div>
+              <!-- 与本次分析发现的关联：MR 涉及文件 + 落在这些文件上的发现 -->
+              <div v-if="mrDiffPaths.length" class="gs-mr-section gs-mr-linkage">
+                <div class="gs-ai-section-title">与本次分析发现的关联</div>
+                <p class="gs-mr-linkage-desc">本 MR 涉及 <strong>{{ mrDiffPaths.length }}</strong> 个文件；以下为<strong>本次任务</strong>分析结果中落在这些文件上的发现，便于结合 MR 变更做用例设计。</p>
+                <div class="gs-mr-paths">
+                  <span class="gs-mr-path-tag" v-for="p in mrDiffPaths" :key="p">{{ p }}</span>
+                </div>
+                <div v-if="findingsInMrFiles.length" class="gs-mr-findings">
+                  <el-table :data="findingsInMrFiles" size="small" class="gs-table" max-height="320">
+                    <el-table-column label="文件" min-width="200">
+                      <template #default="{ row }">
+                        <router-link v-if="taskProjectId && row.file_path" :to="`/projects/${taskProjectId}/code?path=${encodeURIComponent(row.file_path)}&line=${row.line_start || ''}`" class="gs-file-link">{{ shortenPath(row.file_path) }}</router-link>
+                        <span v-else>{{ shortenPath(row.file_path) }}</span>
+                      </template>
+                    </el-table-column>
+                    <el-table-column label="位置" width="80">
+                      <template #default="{ row }">L{{ row.line_start || '-' }}</template>
+                    </el-table-column>
+                    <el-table-column label="风险类型" width="140">
+                      <template #default="{ row }">{{ riskTypeLabel(row.risk_type) }}</template>
+                    </el-table-column>
+                    <el-table-column label="标题" min-width="180" show-overflow-tooltip>
+                      <template #default="{ row }">{{ row.title || '-' }}</template>
+                    </el-table-column>
+                  </el-table>
+                </div>
+                <p v-else class="gs-text-muted" style="margin-top:8px;">本次分析中暂无落在上述 MR 文件上的发现。</p>
+              </div>
+              <div v-if="taskOptions?.mr_diff && taskOptions.mr_diff.length" class="gs-mr-section">
+                <div class="gs-ai-section-title">修改前 / 修改后 代码变更</div>
+                <div v-for="(item, idx) in taskOptions.mr_diff" :key="idx" class="gs-mr-diff-file">
+                  <div class="gs-mr-diff-path">{{ item.path || `文件 ${idx + 1}` }}</div>
+                  <template v-if="item.unified_diff">
+                    <pre class="gs-mr-diff-unified">{{ item.unified_diff }}</pre>
+                  </template>
+                  <template v-else>
+                    <div class="gs-mr-diff-cols">
+                      <div class="gs-mr-diff-col">
+                        <div class="gs-mr-diff-col-title">修改前</div>
+                        <pre class="gs-mr-diff-pre">{{ item.old_content || '（无）' }}</pre>
+                      </div>
+                      <div class="gs-mr-diff-col">
+                        <div class="gs-mr-diff-col-title">修改后</div>
+                        <pre class="gs-mr-diff-pre">{{ item.new_content || '（无）' }}</pre>
+                      </div>
+                    </div>
+                  </template>
+                </div>
+              </div>
+            </div>
+            <div v-else class="gs-mr-empty">
+              <p>当前任务未关联 MR/PR 链接或代码变更。</p>
+              <p style="font-size:12px;color:var(--gs-text-muted);">可在下方填写 MR 链接或粘贴 unified diff（建议含文件路径，便于与本次分析发现关联）。</p>
+            </div>
+            <el-divider />
+            <div class="gs-mr-form">
+              <div class="gs-ai-section-title">填写 / 更新 MR 信息</div>
+              <el-form label-width="100px" style="max-width:720px">
+                <el-form-item label="MR/PR 链接">
+                  <el-input v-model="mrForm.url" placeholder="GitLab MR 或 GitHub PR 链接" clearable />
+                </el-form-item>
+                <el-form-item label="代码变更">
+                  <el-input v-model="mrForm.diffText" type="textarea" :rows="8" placeholder="可选：粘贴 unified diff 或修改前/后内容（多文件可多次保存）" />
+                </el-form-item>
+                <el-form-item>
+                  <el-button type="primary" @click="saveMrInfo" :loading="mrSaving">保存</el-button>
+                </el-form-item>
+              </el-form>
+            </div>
+          </div>
+        </el-tab-pane>
+
         <!-- 导出 -->
         <el-tab-pane label="导出" name="export">
           <div style="padding: 48px; text-align: center;">
@@ -549,6 +637,7 @@ import { useRiskColor } from '../composables/useRiskColor.js'
 import { useModuleNames } from '../composables/useModuleNames.js'
 import { useTestSuggestion } from '../composables/useTestSuggestion.js'
 import { getRiskTypeName } from '../composables/useRiskTypeNames.js'
+import { useFormatDate } from '../composables/useFormatDate.js'
 import EvidenceRenderer from '../components/EvidenceRenderer.vue'
 
 use([CanvasRenderer, RadarChart, TitleComponent, TooltipComponent, LegendComponent])
@@ -561,7 +650,8 @@ export default {
     const { riskColor, riskLevel, severityType, statusType, statusLabel } = useRiskColor()
     const { getDisplayName } = useModuleNames()
     const { getTestObjective, getTestSteps, getTestExpected } = useTestSuggestion()
-    return { riskColor, riskLevel, severityType, statusType, statusLabel, getDisplayName, getTestObjective, getTestSteps, getTestExpected }
+    const { formatDate } = useFormatDate()
+    return { riskColor, riskLevel, severityType, statusType, statusLabel, getDisplayName, getTestObjective, getTestSteps, getTestExpected, formatDate }
   },
   data() {
     return {
@@ -574,9 +664,14 @@ export default {
       activeTab: 'modules',
       filterSeverity: '',
       filterModule: '',
+      mrForm: { url: '', diffText: '' },
+      mrSaving: false,
     }
   },
   computed: {
+    taskOptions() {
+      return this.task?.options || null
+    },
     filteredFindings() {
       let list = this.findings
       if (this.filterSeverity) list = list.filter(f => f.severity === this.filterSeverity)
@@ -639,6 +734,26 @@ export default {
         }],
       }
     },
+    /** MR 变更中的文件路径列表（与本次任务分析关联） */
+    mrDiffPaths() {
+      const diff = this.taskOptions?.mr_diff
+      if (!Array.isArray(diff)) return []
+      return diff.map(d => (d.path || '').trim()).filter(Boolean)
+    },
+    /** 本次任务发现中落在 MR 涉及文件上的项（联系起来分析） */
+    findingsInMrFiles() {
+      const paths = this.mrDiffPaths
+      if (!paths.length) return []
+      const norm = s => (s || '').replace(/^\/+/, '')
+      return this.findings.filter(f => {
+        const fp = norm(f.file_path || '')
+        if (!fp) return false
+        return paths.some(p => {
+          const pp = norm(p)
+          return fp === pp || fp.endsWith('/' + pp) || pp.endsWith('/' + fp)
+        })
+      })
+    },
   },
   async mounted() {
     await this.loadAll()
@@ -647,6 +762,8 @@ export default {
     async loadAll() {
       try {
         this.task = await api.getTaskStatus(this.taskId)
+        this.mrForm.url = this.task?.options?.mr_url || ''
+        this.mrForm.diffText = ''
         this.results = await api.getTaskResults(this.taskId)
         this.modules = this.results.modules || []
         // 尝试读取跨模块 AI 综合结果（存储在 task 的 error_json 中）
@@ -724,9 +841,21 @@ export default {
       try { await api.cancelTask(this.taskId); ElMessage.success('已取消'); await this.loadAll() }
       catch (e) { ElMessage.error('取消失败: ' + e.message) }
     },
-    formatDate(d) {
-      if (!d) return '-'
-      return new Date(d).toLocaleString('zh-CN')
+    async saveMrInfo() {
+      this.mrSaving = true
+      try {
+        const payload = { mr_url: this.mrForm.url || null }
+        if (this.mrForm.diffText && this.mrForm.diffText.trim()) {
+          payload.mr_diff = [{ path: '', unified_diff: this.mrForm.diffText.trim() }]
+        }
+        await api.updateTaskMr(this.taskId, payload)
+        ElMessage.success('MR 信息已更新')
+        this.task = await api.getTaskStatus(this.taskId)
+      } catch (e) {
+        ElMessage.error('保存失败: ' + e.message)
+      } finally {
+        this.mrSaving = false
+      }
     },
   },
 }
@@ -797,6 +926,33 @@ export default {
 }
 .gs-export-label { font-weight: 600; font-size: 14px; }
 .gs-export-desc { font-size: 12px; color: var(--gs-text-muted); }
+
+/* ── MR 代码变更 ───────────────────── */
+.gs-mr-block { padding: 16px; }
+.gs-mr-display { margin-bottom: 20px; }
+.gs-mr-section { margin-bottom: 20px; }
+.gs-mr-link { color: var(--gs-primary); word-break: break-all; }
+.gs-mr-empty { color: var(--gs-text-muted); margin-bottom: 16px; }
+.gs-mr-diff-file { margin-bottom: 20px; border: 1px solid var(--gs-border); border-radius: 8px; overflow: hidden; }
+.gs-mr-diff-path { padding: 8px 12px; background: #f5f5f5; font-family: var(--gs-font-mono); font-size: 12px; }
+.gs-mr-diff-unified, .gs-mr-diff-pre {
+  margin: 0; padding: 12px; font-family: var(--gs-font-mono); font-size: 12px;
+  background: #1e1e1e; color: #d4d4d4; overflow-x: auto; white-space: pre-wrap; max-height: 400px; overflow-y: auto;
+}
+.gs-mr-diff-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 0; }
+.gs-mr-diff-col { border-right: 1px solid var(--gs-border); }
+.gs-mr-diff-col:last-child { border-right: none; }
+.gs-mr-diff-col-title { padding: 6px 12px; background: #eee; font-size: 12px; font-weight: 600; }
+.gs-mr-diff-col .gs-mr-diff-pre { max-height: 300px; }
+.gs-mr-form { margin-top: 16px; }
+.gs-mr-intro { margin-bottom: 16px; }
+.gs-mr-linkage { background: var(--gs-bg-subtle, #f8f9fa); border-radius: 8px; padding: 12px 16px; }
+.gs-mr-linkage-desc { font-size: 13px; color: var(--gs-text-secondary); margin-bottom: 10px; }
+.gs-mr-paths { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+.gs-mr-path-tag { font-family: var(--gs-font-mono); font-size: 11px; padding: 4px 8px; background: #e8eaed; border-radius: 4px; }
+.gs-mr-findings .gs-table { margin-top: 8px; }
+.gs-mr-findings .gs-file-link { color: var(--gs-primary); text-decoration: none; }
+.gs-mr-findings .gs-file-link:hover { text-decoration: underline; }
 
 /* ── 内联测试建议 ──────────────────── */
 .gs-inline-test-suggestion {
