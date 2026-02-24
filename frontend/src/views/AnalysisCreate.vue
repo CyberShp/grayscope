@@ -41,6 +41,22 @@
       <!-- Step 2: 配置分析 -->
       <div v-if="step === 1">
         <el-form label-width="120px" style="max-width:700px;margin:24px auto">
+          <el-form-item label="任务来源">
+            <el-radio-group v-model="form.options.task_source">
+              <el-radio-button value="repo">仅仓库（继承特性）</el-radio-button>
+              <el-radio-button value="mr">仅 MR（新增特性）</el-radio-button>
+              <el-radio-button value="mr_repo">MR + 关联仓库（推荐）</el-radio-button>
+            </el-radio-group>
+            <div style="color:#909399;font-size:12px;margin-top:4px">关联仓库时可分析 MR 变更对已有代码的影响</div>
+          </el-form-item>
+          <el-form-item label="分析支柱">
+            <el-radio-group v-model="form.options.pillar">
+              <el-radio-button value="full">全量</el-radio-button>
+              <el-radio-button value="exception">异常分支</el-radio-button>
+              <el-radio-button value="concurrency">并发时序</el-radio-button>
+              <el-radio-button value="protocol">协议报文</el-radio-button>
+            </el-radio-group>
+          </el-form-item>
           <el-form-item label="任务类型">
             <el-radio-group v-model="form.task_type">
               <el-radio-button value="full">全量分析</el-radio-button>
@@ -231,7 +247,7 @@ export default {
         revision: { branch: 'main', base_commit: '', head_commit: '' },
         analyzers: ['branch_path', 'boundary_value', 'error_path', 'call_graph', 'data_flow', 'concurrency', 'diff_impact', 'coverage_map'],
         ai: { provider: savedProvider, model: savedModel, prompt_profile: 'default-v1' },
-        options: { max_files: 500, risk_threshold: 0.6, callgraph_depth: 12, enable_data_flow: true, enable_cross_module_ai: true, mr_url: '' },
+        options: { max_files: 500, risk_threshold: 0.6, callgraph_depth: 12, enable_data_flow: true, enable_cross_module_ai: true, mr_url: '', task_source: 'repo', pillar: 'full' },
       },
       submitting: false,
       result: null,

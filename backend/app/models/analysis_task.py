@@ -36,6 +36,8 @@ class AnalysisTask(TimestampMixin, Base):
     finished_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # V2: 分析支柱 exception/concurrency/protocol/full
+    pillar: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
 
     # relationships
     module_results = relationship(

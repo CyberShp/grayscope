@@ -33,6 +33,7 @@ def create_task(
     ai: dict,
     options: dict | None = None,
     idempotency_key: str | None = None,
+    pillar: str | None = None,
 ) -> AnalysisTask:
     obj = AnalysisTask(
         task_id=task_id,
@@ -46,6 +47,7 @@ def create_task(
         ai_json=json.dumps(ai),
         options_json=json.dumps(options) if options else None,
         idempotency_key=idempotency_key,
+        pillar=pillar,
     )
     db.add(obj)
     db.commit()

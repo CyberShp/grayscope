@@ -584,6 +584,20 @@ class TestTaskRetryCancel:
         res = client.post("/api/v1/analysis/tasks/no-such-task/retry", json={})
         assert res.status_code == 404
 
+    def test_059a_generate_sfmea(self, client, create_task):
+        """POST /analysis/tasks/{task_id}/sfmea returns 200 and generated count."""
+        _, _, task = create_task()
+        res = client.post(f"/api/v1/analysis/tasks/{task['task_id']}/sfmea", json={})
+        assert res.status_code == 200
+        data = res.json()
+        assert "data" in data
+        assert "generated" in data["data"]
+
+    def test_059b_generate_sfmea_not_found(self, client):
+        """POST sfmea for nonexistent task returns 404."""
+        res = client.post("/api/v1/analysis/tasks/no-such-task/sfmea", json={})
+        assert res.status_code == 404
+
 
 class TestTaskExport:
     def test_060_export_json(self, client, create_task):

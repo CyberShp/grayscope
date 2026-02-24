@@ -62,6 +62,7 @@ export default {
   deleteTask: (taskId) => request('DELETE', `/analysis/tasks/${taskId}`),
   deletePreview: (taskIds) => request('POST', '/analysis/tasks/delete-preview', { task_ids: taskIds }),
   batchDeleteTasks: (taskIds) => request('POST', '/analysis/tasks/batch-delete', { task_ids: taskIds }),
+  generateSfmea: (taskId) => request('POST', `/analysis/tasks/${taskId}/sfmea`, {}),
   retryTask: (taskId, body) => request('POST', `/analysis/tasks/${taskId}/retry`, body),
   cancelTask: (taskId) => request('POST', `/analysis/tasks/${taskId}/cancel`, {}),
 
@@ -104,6 +105,7 @@ export default {
     return request('GET', `/test-cases${qs ? '?' + qs : ''}`)
   },
   getTestCase: (id) => request('GET', `/test-cases/${id}`),
+  getTestCaseScript: (id) => request('GET', `/test-cases/${id}/script`),
   updateTestCase: (id, body) => request('PATCH', `/test-cases/${id}`, body),
   getTestCaseTemplate: () => request('GET', '/test-cases/template'),
   getFindingTestSuggestion: (findingId) =>

@@ -60,12 +60,39 @@ def _migrate_test_case_hint_columns():
                 logger.warning("test_cases migration %s: %s", col, e)
 
 
+def _migrate_v2_columns():
+    """V2: 分析支柱、传播链、用例执行字段及新表。"""
+    from sqlalchemy import text
+    migrations = [
+        ("analysis_tasks", "pillar", "TEXT"),
+        ("risk_findings", "pillar", "TEXT"),
+        ("risk_findings", "call_chain_json", "TEXT"),
+        ("test_cases", "execution_type", "TEXT"),
+        ("test_cases", "target_device_json", "TEXT"),
+        ("test_cases", "instruments_json", "TEXT"),
+        ("test_cases", "script_content", "TEXT"),
+        ("test_cases", "expected_protocol_json", "TEXT"),
+    ]
+    for table, col, typ in migrations:
+        try:
+            with engine.connect() as conn:
+                conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {typ}"))
+                conn.commit()
+            logger.info("v2 migration: %s.%s", table, col)
+        except Exception as e:
+            if "duplicate" in str(e).lower() or "already exists" in str(e).lower():
+                pass
+            else:
+                logger.warning("v2 migration %s.%s: %s", table, col, e)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # 启动：创建数据库表（开发便利；生产环境使用 Alembic）
     Base.metadata.create_all(bind=engine)
     _migrate_repo_auth_columns()
     _migrate_test_case_hint_columns()
+    _migrate_v2_columns()
     logger.info("数据库表已就绪")
     yield
     # 关闭

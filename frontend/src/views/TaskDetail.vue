@@ -16,6 +16,7 @@
           <el-icon><RefreshRight /></el-icon> 重试
         </el-button>
         <el-button v-if="['pending','running'].includes(task.status)" type="danger" size="small" plain @click="doCancel">取消</el-button>
+        <el-button v-if="['success','partial_failed'].includes(task.status)" size="small" @click="doGenerateSfmea" :loading="sfmeaLoading">生成 SFMEA</el-button>
         <el-dropdown trigger="click">
           <el-button size="small"><el-icon><Download /></el-icon> 导出</el-button>
           <template #dropdown>
@@ -666,6 +667,7 @@ export default {
       filterModule: '',
       mrForm: { url: '', diffText: '' },
       mrSaving: false,
+      sfmeaLoading: false,
     }
   },
   computed: {
@@ -840,6 +842,17 @@ export default {
     async doCancel() {
       try { await api.cancelTask(this.taskId); ElMessage.success('已取消'); await this.loadAll() }
       catch (e) { ElMessage.error('取消失败: ' + e.message) }
+    },
+    async doGenerateSfmea() {
+      this.sfmeaLoading = true
+      try {
+        const data = await api.generateSfmea(this.taskId)
+        ElMessage.success(data?.generated != null ? `已生成 ${data.generated} 条 SFMEA 条目` : 'SFMEA 已生成')
+      } catch (e) {
+        ElMessage.error('生成 SFMEA 失败: ' + e.message)
+      } finally {
+        this.sfmeaLoading = false
+      }
     },
     async saveMrInfo() {
       this.mrSaving = true

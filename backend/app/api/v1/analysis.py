@@ -13,7 +13,7 @@ from app.core.response import ok
 from app.repositories import task_repo
 from app.repositories.coverage_import_repo import create as coverage_import_create, get_latest_by_task_id
 from app.schemas.analysis import CoverageImportRequest, RetryRequest, TaskCreateRequest, TaskMrUpdate
-from app.services import analysis_orchestrator, export_service, task_service
+from app.services import analysis_orchestrator, export_service, task_service, sfmea_service
 
 
 class BatchDeleteRequest(BaseModel):
@@ -169,6 +169,16 @@ def batch_delete_tasks(req: BatchDeleteRequest, db: Session = Depends(get_db)) -
         raise HTTPException(HTTP_404_NOT_FOUND, detail="未找到任何有效任务")
     counts = task_repo.delete_tasks_batch(db, task_pks)
     return ok(counts, message=f"已删除 {counts['task_count']} 个任务")
+
+
+@router.post("/analysis/tasks/{task_id}/sfmea")
+def generate_sfmea(task_id: str, db: Session = Depends(get_db)) -> dict:
+    """根据任务分析结果生成 SFMEA 条目。"""
+    task = task_repo.get_task_by_id(db, task_id)
+    if not task:
+        raise HTTPException(HTTP_404_NOT_FOUND, detail="任务不存在")
+    count = sfmea_service.generate_from_task(db, task_id)
+    return ok({"generated": count}, message=f"已生成 {count} 条 SFMEA 条目")
 
 
 @router.post("/analysis/tasks/{task_id}/retry", status_code=HTTP_202_ACCEPTED)

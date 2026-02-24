@@ -58,6 +58,8 @@ def create_task(db: Session, req: TaskCreateRequest) -> TaskCreateOut:
             )
 
     tid = gen_task_id()
+    options_dict = req.options.model_dump()
+    pillar = getattr(req.options, "pillar", None) or options_dict.get("pillar")
     task = task_repo.create_task(
         db,
         task_id=tid,
@@ -68,8 +70,9 @@ def create_task(db: Session, req: TaskCreateRequest) -> TaskCreateOut:
         revision=req.revision.model_dump(),
         analyzers=req.analyzers,
         ai=req.ai.model_dump(),
-        options=req.options.model_dump(),
+        options=options_dict,
         idempotency_key=req.idempotency_key,
+        pillar=pillar,
     )
 
     # 预创建模块结果记录（初始状态为 pending）
@@ -120,6 +123,7 @@ def get_task_status(db: Session, task_id: str) -> TaskStatusOut:
         updated_at=task.updated_at,
         error_json=task.error_json,
         options=options_dict,
+        pillar=getattr(task, "pillar", None),
     )
 
 

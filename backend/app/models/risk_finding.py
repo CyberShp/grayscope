@@ -35,6 +35,9 @@ class RiskFinding(Base):
     title: Mapped[str] = mapped_column(String(256), nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False)
     evidence_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # V2: 支柱；错误传播链等
+    pillar: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    call_chain_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),

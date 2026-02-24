@@ -868,7 +868,24 @@ def _test_case_to_dict(tc: TestCase, db: Session) -> dict:
         "expected_failure": getattr(tc, "expected_failure", None),
         "unacceptable_outcomes": _parse_json_list(getattr(tc, "unacceptable_outcomes_json", None)),
         "related_functions": _parse_json_list(getattr(tc, "related_functions_json", None)),
+        "execution_type": getattr(tc, "execution_type", None),
+        "script_content": getattr(tc, "script_content", None),
     }
+
+
+@router.get("/test-cases/{test_case_id}/script")
+def get_test_case_script(
+    test_case_id: int,
+    db: Session = Depends(get_db),
+) -> dict:
+    """获取测试用例的生成脚本（若无则按当前用例生成）。"""
+    from app.services.script_generator import generate_python_script
+    tc = get_test_case_by_id(db, test_case_id)
+    if not tc:
+        return ok({"script": None})
+    d = _test_case_to_dict(tc, db)
+    script = getattr(tc, "script_content", None) or generate_python_script(d)
+    return ok({"script": script})
 
 
 @router.get("/test-cases/template")

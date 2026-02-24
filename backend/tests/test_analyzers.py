@@ -991,7 +991,7 @@ class TestAnalyzerRegistry:
         from app.analyzers.registry import ALL_MODULES, MODULE_REGISTRY
         expected = {
             "branch_path", "boundary_value", "error_path", "call_graph",
-            "path_and_resource",
+            "path_and_resource", "exception",
             "data_flow", "concurrency", "diff_impact", "coverage_map",
             "postmortem", "knowledge_pattern",
         }
@@ -1003,7 +1003,7 @@ class TestAnalyzerRegistry:
         from app.analyzers.registry import get_all_display_names
         names = get_all_display_names()
         assert isinstance(names, dict)
-        assert len(names) == 10
+        assert len(names) == 12
         assert all(isinstance(v, str) for v in names.values())
 
     def test_get_description(self):

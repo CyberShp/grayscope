@@ -44,6 +44,12 @@ class TestCase(Base):
     expected_failure: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     unacceptable_outcomes_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     related_functions_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # V2: 执行类型 manual/script/automated；目标设备；仪器；生成脚本；协议预期
+    execution_type: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
+    target_device_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    instruments_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    script_content: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    expected_protocol_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
