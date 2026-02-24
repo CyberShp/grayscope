@@ -204,7 +204,7 @@
 </template>
 
 <script>
-import { Plus, CaretRight } from '@element-plus/icons-vue'
+import { Plus, CaretRight, Upload } from '@element-plus/icons-vue'
 import api from '../api.js'
 import { useModuleNames } from '../composables/useModuleNames.js'
 

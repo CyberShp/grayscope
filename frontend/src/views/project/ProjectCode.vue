@@ -1,7 +1,7 @@
 <template>
   <div class="gs-code-layout">
-    <!-- 左侧文件树 -->
-    <aside class="gs-file-tree">
+    <!-- 左侧文件树（可拖拽调整宽度） -->
+    <aside class="gs-file-tree" :style="{ width: treeWidth + 'px' }">
       <div class="gs-file-tree-header">
         <el-input v-model="fileSearch" placeholder="搜索文件..." size="small" clearable :prefix-icon="SearchIcon" />
       </div>
@@ -17,12 +17,14 @@
           <el-icon :size="14" style="margin-right: 6px; flex-shrink: 0;">
             <component :is="node.type === 'dir' ? 'FolderOpened' : 'Document'" />
           </el-icon>
-          <span class="gs-tree-name">{{ node.name }}</span>
+          <span class="gs-tree-name" :title="node.path">{{ node.path || node.name }}</span>
           <span v-if="node.finding_count" class="gs-tree-badge">{{ node.finding_count }}</span>
         </div>
         <el-empty v-if="!filteredTree.length" description="暂无文件" :image-size="40" />
       </div>
     </aside>
+
+    <div class="gs-code-resizer" @mousedown="startResize" title="拖拽调整左侧宽度" />
 
     <!-- 右侧源码查看器 -->
     <div class="gs-source-viewer">
@@ -111,6 +113,29 @@ const sourceContent = ref('')
 const fileFindings = ref([])
 const selectedIssueLine = ref(null)
 const fileSearch = ref('')
+const treeWidth = ref(280)
+const MIN_TREE_WIDTH = 180
+const MAX_TREE_WIDTH = 600
+
+function startResize(e) {
+  const startX = e.clientX
+  const startW = treeWidth.value
+  function onMove(ev) {
+    const dx = ev.clientX - startX
+    const next = Math.min(MAX_TREE_WIDTH, Math.max(MIN_TREE_WIDTH, startW + dx))
+    treeWidth.value = next
+  }
+  function onUp() {
+    document.removeEventListener('mousemove', onMove)
+    document.removeEventListener('mouseup', onUp)
+    document.body.style.cursor = ''
+    document.body.style.userSelect = ''
+  }
+  document.body.style.cursor = 'col-resize'
+  document.body.style.userSelect = 'none'
+  document.addEventListener('mousemove', onMove)
+  document.addEventListener('mouseup', onUp)
+}
 
 const sourceLines = computed(() => sourceContent.value ? sourceContent.value.split('\n') : [])
 
@@ -207,12 +232,23 @@ watch(() => props.projectId, loadTree)
 
 /* ── 文件树 ─────────────────────────── */
 .gs-file-tree {
-  width: 280px;
+  min-width: 180px;
   flex-shrink: 0;
   border-right: 1px solid var(--gs-border);
   background: var(--gs-surface);
   display: flex;
   flex-direction: column;
+}
+
+.gs-code-resizer {
+  width: 6px;
+  flex-shrink: 0;
+  cursor: col-resize;
+  background: var(--gs-border-light);
+  transition: background 0.15s;
+}
+.gs-code-resizer:hover {
+  background: var(--el-color-primary);
 }
 
 .gs-file-tree-header {
@@ -277,9 +313,16 @@ watch(() => props.projectId, loadTree)
   display: flex;
   align-items: center;
   gap: 6px;
+  min-width: 0;
+  overflow: hidden;
   font-family: var(--gs-font-mono);
   font-size: var(--gs-font-sm);
   color: var(--gs-text-primary);
+}
+.gs-source-path span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .gs-source-finding-count {

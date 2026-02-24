@@ -7,7 +7,7 @@ import time
 
 from fastapi import APIRouter
 
-from app.ai.provider_registry import SUPPORTED_PROVIDERS, get_provider
+from app.ai.provider_registry import SUPPORTED_PROVIDERS, get_provider, build_provider_uncached
 from app.config import settings
 from app.core.response import error, ok
 from app.schemas.model_config import ModelListOut, ModelTestOut, ModelTestRequest, ProviderModels
@@ -143,7 +143,16 @@ def test_model(req: ModelTestRequest) -> dict:
     if req.provider not in SUPPORTED_PROVIDERS:
         return error("INVALID_REQUEST", f"unknown provider: {req.provider}")
 
-    provider = get_provider(req.provider, model=req.model)
+    overrides = {"model": req.model}
+    if req.api_key is not None:
+        overrides["api_key"] = req.api_key
+    if req.base_url is not None:
+        overrides["base_url"] = req.base_url.rstrip("/")
+    # Use fresh provider when caller passes api_key/base_url so sk is sent for this test
+    if req.api_key is not None or req.base_url is not None:
+        provider = build_provider_uncached(req.provider, **overrides)
+    else:
+        provider = get_provider(req.provider, **overrides)
     start = time.time()
     try:
         healthy = asyncio.get_event_loop().run_until_complete(provider.health_check())

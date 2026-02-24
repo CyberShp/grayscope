@@ -112,6 +112,10 @@
                 </template>
               </el-input>
             </el-form-item>
+            <el-form-item label="OpenAI 兼容 端点">
+              <el-input v-model="baseUrls.openai_compat" placeholder="内网 API 地址，如 https://api.internal/v1" clearable />
+              <div style="font-size: 12px; color: var(--gs-text-muted); margin-top: 4px;">设置后测试连接会携带上方 Key 请求该端点</div>
+            </el-form-item>
           </el-form>
         </div>
       </el-tab-pane>
@@ -207,6 +211,10 @@ async function loadModels() {
   try {
     const data = await api.listModels()
     models.value = (data?.providers || data || []).map(m => ({ ...m, _testing: false }))
+    for (const m of models.value) {
+      const pid = m.provider_id || m.name
+      if (m.base_url && pid) baseUrls.value[pid] = m.base_url
+    }
   } catch {
     models.value = []
   }
@@ -214,8 +222,12 @@ async function loadModels() {
 
 async function testProvider(m) {
   m._testing = true
+  const body = { provider: m.provider_id || m.name, model: m.models?.[0] || 'default' }
+  const pid = m.provider_id || m.name
+  if (apiKeys.value[pid]) body.api_key = apiKeys.value[pid]
+  if (baseUrls.value[pid]) body.base_url = baseUrls.value[pid]
   try {
-    await api.testModel({ provider: m.provider_id || m.name, model: m.models?.[0] || 'default' })
+    await api.testModel(body)
     m.healthy = true
     ElMessage.success(`${m.display_name || m.name} 连接成功`)
   } catch (e) {
@@ -247,15 +259,18 @@ function saveDefaultModel() {
 }
 
 const apiKeys = ref({ deepseek: '', qwen: '', openai_compat: '' })
+const baseUrls = ref({ deepseek: '', qwen: '', openai_compat: '' })
 const savingKey = ref('')
 
 async function saveApiKey(provider) {
   savingKey.value = provider
   try {
+    const payload = { provider, api_key: apiKeys.value[provider] }
+    if (baseUrls.value[provider]) payload.base_url = baseUrls.value[provider]
     const res = await fetch('/api/v1/models/config', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ provider, api_key: apiKeys.value[provider] }),
+      body: JSON.stringify(payload),
     })
     const data = await res.json()
     if (data.code === 'OK') {

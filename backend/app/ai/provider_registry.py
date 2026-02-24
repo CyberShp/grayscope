@@ -63,6 +63,11 @@ def get_provider(provider_name: str, **overrides: Any) -> ModelProvider:
     return _cache[cache_key]
 
 
+def build_provider_uncached(provider_name: str, **overrides: Any) -> ModelProvider:
+    """Build a provider instance without caching (e.g. for test with custom api_key/base_url)."""
+    return _build(provider_name, **overrides)
+
+
 def clear_cache() -> None:
     _cache.clear()
 
