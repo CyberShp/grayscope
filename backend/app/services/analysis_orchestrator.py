@@ -20,6 +20,7 @@ from app.analyzers import (
     call_graph_builder,
     path_and_resource_analyzer,
     exception_analyzer,
+    protocol_analyzer,
     data_flow_analyzer,
     concurrency_analyzer,
     diff_impact_analyzer,
@@ -46,6 +47,7 @@ MODULE_DEPS: dict[str, list[str]] = {
     "call_graph": [],
     "path_and_resource": [],  # P2: 合并 branch_path + error_path
     "exception": [],  # V2 支柱一：异常分支
+    "protocol": [],  # V2 支柱三：协议报文（占位）
     # Phase B: 数据流基础设施
     "data_flow": ["call_graph"],
     # Phase C: 上下文感知分析
@@ -65,6 +67,7 @@ MODULE_WEIGHTS: dict[str, float] = {
     "call_graph": 0.6,
     "path_and_resource": 1.1,
     "exception": 1.1,
+    "protocol": 0.8,
     "data_flow": 1.2,
     "concurrency": 1.3,
     "diff_impact": 1.2,
@@ -81,6 +84,7 @@ _ANALYZER_REGISTRY: dict[str, Any] = {
     "call_graph": call_graph_builder,
     "path_and_resource": path_and_resource_analyzer,
     "exception": exception_analyzer,
+    "protocol": protocol_analyzer,
     "data_flow": data_flow_analyzer,
     "concurrency": concurrency_analyzer,
     "diff_impact": diff_impact_analyzer,

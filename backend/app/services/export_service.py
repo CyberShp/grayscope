@@ -810,6 +810,31 @@ def export_html(db: Session, task_id: str) -> str:
     return "\n".join(html_parts)
 
 
+def export_sfmea_csv(db: Session, task_id: str) -> str:
+    """导出任务 SFMEA 条目为 CSV（RPN、严重度等）。"""
+    from app.models.sfmea_entry import SfmeaEntry
+
+    task = task_repo.get_task_by_id(db, task_id)
+    if task is None:
+        raise NotFoundError(f"任务 {task_id} 未找到")
+    rows = db.query(SfmeaEntry).filter(SfmeaEntry.task_id == task.id).order_by(SfmeaEntry.id).all()
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["id", "failure_mode", "severity", "occurrence", "detection", "rpn", "file_path", "symbol_name"])
+    for r in rows:
+        writer.writerow([
+            r.id,
+            r.failure_mode or "",
+            r.severity if r.severity is not None else "",
+            r.occurrence if r.occurrence is not None else "",
+            r.detection if r.detection is not None else "",
+            f"{r.rpn:.2f}" if r.rpn is not None else "",
+            r.file_path or "",
+            r.symbol_name or "",
+        ])
+    return output.getvalue()
+
+
 def _escape(s: str) -> str:
     if not s:
         return ""

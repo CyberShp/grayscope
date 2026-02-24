@@ -638,6 +638,14 @@ class TestTaskExport:
         assert "text/html" in res.headers.get("content-type", "")
         assert b"GrayScope" in res.content or "GrayScope" in res.text
 
+    def test_062a3_export_sfmea(self, client, create_task):
+        """Export SFMEA entries as CSV."""
+        _, _, task = create_task()
+        res = client.get(f"/api/v1/analysis/tasks/{task['task_id']}/export?fmt=sfmea")
+        assert res.status_code == 200
+        assert "text/csv" in res.headers.get("content-type", "")
+        assert b"failure_mode" in res.content or "failure_mode" in res.text
+
     def test_062b_coverage_import_summary(self, client, create_task):
         """北向接口：POST 写入 summary 格式覆盖率."""
         _, _, task = create_task()

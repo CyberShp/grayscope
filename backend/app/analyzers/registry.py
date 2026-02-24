@@ -73,12 +73,17 @@ MODULE_REGISTRY: dict[str, dict[str, Any]] = {
         "description": "V2 支柱一：错误路径与分支路径统一分析，聚焦异常分支、资源生命周期与错误传播",
         "category": "静态分析",
     },
+    "protocol": {
+        "display_name": "协议报文分析",
+        "description": "V2 支柱三：协议/报文序列与 pcap 解析占位，后续接入仪器控制",
+        "category": "协议分析",
+    },
 }
 
 # ── 分析任务支持的模块集合（不含事后分析模块） ──────────────────────────
 ANALYSIS_MODULES = [
     "branch_path", "boundary_value", "error_path", "call_graph",
-    "path_and_resource", "exception",
+    "path_and_resource", "exception", "protocol",
     "data_flow", "concurrency", "diff_impact", "coverage_map",
 ]
 

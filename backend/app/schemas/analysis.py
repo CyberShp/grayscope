@@ -54,7 +54,7 @@ class AnalysisOptions(BaseModel):
 
 SUPPORTED_MODULES = {
     "branch_path", "boundary_value", "error_path", "call_graph",
-    "path_and_resource", "exception",
+    "path_and_resource", "exception", "protocol",
     "data_flow", "concurrency", "diff_impact", "coverage_map",
     "postmortem", "knowledge_pattern",
 }

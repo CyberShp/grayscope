@@ -51,7 +51,7 @@ def export_task(
     task_id: str,
     fmt: str = Query(
         "json",
-        pattern="^(json|csv|markdown|findings|critical|html)$",
+        pattern="^(json|csv|markdown|findings|critical|html|sfmea)$",
     ),
     db: Session = Depends(get_db),
 ):
@@ -64,7 +64,17 @@ def export_task(
     - findings：原始发现及 AI 增强数据（JSON）
     - critical：仅多函数交汇临界点（JSON，便于快速粘贴）
     - html：单页 HTML 报告（便于分享与归档）
+    - sfmea：SFMEA 条目 CSV（RPN、严重度等）
     """
+    if fmt == "sfmea":
+        content = export_service.export_sfmea_csv(db, task_id)
+        return PlainTextResponse(
+            content,
+            media_type="text/csv",
+            headers={
+                "Content-Disposition": f'attachment; filename="grayscope_{task_id}_sfmea.csv"'
+            },
+        )
     if fmt == "csv":
         content = export_service.export_csv(db, task_id)
         return PlainTextResponse(

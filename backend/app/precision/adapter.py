@@ -20,3 +20,16 @@ class CoverageAdapter(Protocol):
         ...
     def get_test_mapping(self, test_case_id: int) -> list[dict[str, Any]]:
         ...
+
+
+class StubCoverageAdapter:
+    """占位覆盖率适配器：返回空数据，用于 gcov/北向接口未接入时。"""
+
+    def fetch_coverage(self, project_id: int, revision: str) -> CoverageData:
+        return CoverageData()
+
+    def get_call_chains(self, function_name: str) -> list[dict[str, Any]]:
+        return []
+
+    def get_test_mapping(self, test_case_id: int) -> list[dict[str, Any]]:
+        return []
