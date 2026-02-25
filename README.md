@@ -181,6 +181,8 @@ python -m grayscope_cli.main knowledge search --project 1 --keyword leak
 | [灰盒测试分析原理与设计](docs/GRAYBOX_ANALYSIS.md) | **灰盒分析原理、多函数交汇临界点、预期失败 vs 不可接受结果、各分析器灰盒证据设计、数据流与用例生成** |
 | [核心功能代码实现说明](docs/IMPLEMENTATION.md) | **从 API → 任务创建 → 编排器 → 各分析器 analyze() → 发现持久化 → 导出为测试用例的完整代码路径与关键实现** |
 | [灰盒核心价值说明](docs/GRAYBOX_VALUE.md) | 黑盒 vs 灰盒、iSCSI 示例、GrayScope 如何支撑 |
+| [部署文档](docs/DEPLOYMENT.md) | **Docker/本地部署、端口、环境、测试执行环境、故障排查** |
+| [产品使用指南](docs/PRODUCT_GUIDE.md) | **项目与仓库、新建分析、任务结果、测试设计、DT 脚本说明、测试执行、导出、事后分析与知识库、CLI** |
 | [PRD](docs/PRD.md) | 产品需求 |
 | [HLD](docs/HLD.md) | 高层设计 |
 | [PLAN](docs/PLAN.md) | 实施计划 |
