@@ -69,11 +69,12 @@
             <el-input v-model="form.target.path" placeholder="例如: src/ 或 storage_module.c" />
           </el-form-item>
           <el-form-item label="分析器模块">
+            <div class="gs-module-hint">共 11 个核心分析模块（含 V2 支柱：异常分支、并发时序、协议报文）</div>
             <el-checkbox-group v-model="form.analyzers">
-              <div v-for="mod in ANALYSIS_MODULES" :key="mod" style="margin-bottom:8px">
+              <div v-for="mod in ANALYSIS_MODULES" :key="mod" class="gs-module-row">
                 <el-checkbox :value="mod">
-                  <span style="font-weight:600">{{ getDisplayName(mod) }}</span>
-                  <span style="color:#909399;font-size:12px;margin-left:8px">{{ getDescription(mod) }}</span>
+                  <span class="gs-module-name">{{ getDisplayName(mod) }}</span>
+                  <span class="gs-module-desc">{{ getDescription(mod) }}</span>
                 </el-checkbox>
               </div>
             </el-checkbox-group>
@@ -147,6 +148,8 @@
           <el-descriptions-item label="项目ID">{{ form.project_id }}</el-descriptions-item>
           <el-descriptions-item label="仓库ID">{{ form.repo_id }}</el-descriptions-item>
           <el-descriptions-item label="任务类型">{{ form.task_type }}</el-descriptions-item>
+          <el-descriptions-item label="任务来源">{{ form.options.task_source }}</el-descriptions-item>
+          <el-descriptions-item label="分析支柱">{{ pillarLabel(form.options.pillar) }}</el-descriptions-item>
           <el-descriptions-item label="目标路径">{{ form.target.path || '（全量）' }}</el-descriptions-item>
           <el-descriptions-item label="分析器模块" :span="2">
             <el-tag v-for="m in form.analyzers" :key="m" size="small" style="margin:2px">{{ getDisplayName(m) }}</el-tag>
@@ -245,7 +248,7 @@ export default {
         task_type: 'full',
         target: { path: '' },
         revision: { branch: 'main', base_commit: '', head_commit: '' },
-        analyzers: ['branch_path', 'boundary_value', 'error_path', 'call_graph', 'data_flow', 'concurrency', 'diff_impact', 'coverage_map'],
+        analyzers: ['branch_path', 'boundary_value', 'error_path', 'call_graph', 'path_and_resource', 'exception', 'protocol', 'data_flow', 'concurrency', 'diff_impact', 'coverage_map'],
         ai: { provider: savedProvider, model: savedModel, prompt_profile: 'default-v1' },
         options: { max_files: 500, risk_threshold: 0.6, callgraph_depth: 12, enable_data_flow: true, enable_cross_module_ai: true, mr_url: '', task_source: 'repo', pillar: 'full' },
       },
@@ -269,6 +272,18 @@ export default {
     selectedProviderHealth() {
       const p = this.aiProviders.find(m => m.provider_id === this.form.ai.provider)
       return p?.healthy ?? null
+    },
+  },
+  watch: {
+    'form.options.pillar'(val) {
+      if (!val) return
+      const sets = {
+        full: ['branch_path', 'boundary_value', 'error_path', 'call_graph', 'path_and_resource', 'exception', 'protocol', 'data_flow', 'concurrency', 'diff_impact', 'coverage_map'],
+        exception: ['path_and_resource', 'exception'],
+        concurrency: ['call_graph', 'data_flow', 'concurrency'],
+        protocol: ['protocol'],
+      }
+      this.form.analyzers = sets[val] || sets.full
     },
   },
   async mounted() {
@@ -356,10 +371,18 @@ export default {
       this.result = null
       this.error = ''
     },
+    pillarLabel(pillar) {
+      const m = { full: '全量', exception: '异常分支', concurrency: '并发时序', protocol: '协议报文' }
+      return m[pillar] || pillar || '全量'
+    },
   },
 }
 </script>
 
 <style scoped>
 .gs-section { margin-bottom: 20px; }
+.gs-module-hint { color: #909399; font-size: 12px; margin-bottom: 8px; }
+.gs-module-row { margin-bottom: 8px; }
+.gs-module-name { font-weight: 600; }
+.gs-module-desc { color: #909399; font-size: 12px; margin-left: 8px; }
 </style>

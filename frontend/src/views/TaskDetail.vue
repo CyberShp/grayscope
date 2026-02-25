@@ -23,6 +23,10 @@
             <el-dropdown-menu>
               <el-dropdown-item @click="doExport('json')">JSON 测试用例</el-dropdown-item>
               <el-dropdown-item @click="doExport('csv')">CSV 表格</el-dropdown-item>
+              <el-dropdown-item @click="doExport('sfmea')">SFMEA 条目 (CSV)</el-dropdown-item>
+              <el-dropdown-item @click="doExport('markdown')">Markdown 清单</el-dropdown-item>
+              <el-dropdown-item @click="doExport('critical')">仅交汇临界点</el-dropdown-item>
+              <el-dropdown-item @click="doExport('html')">HTML 报告</el-dropdown-item>
               <el-dropdown-item @click="doExport('findings')">原始发现</el-dropdown-item>
             </el-dropdown-menu>
           </template>
@@ -596,6 +600,11 @@
                 <el-icon :size="32" color="#00AA00"><Grid /></el-icon>
                 <div class="gs-export-label">CSV 表格</div>
                 <div class="gs-export-desc">先交汇点再用例，可导入测试管理</div>
+              </div>
+              <div class="gs-export-card" @click="doExport('sfmea')">
+                <el-icon :size="32" color="#7C3AED"><Document /></el-icon>
+                <div class="gs-export-label">SFMEA 条目 (CSV)</div>
+                <div class="gs-export-desc">RPN、严重度等</div>
               </div>
               <div class="gs-export-card" @click="doExport('markdown')">
                 <el-icon :size="32" color="#7C3AED"><Document /></el-icon>

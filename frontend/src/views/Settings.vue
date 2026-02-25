@@ -161,7 +161,7 @@
               {{ systemHealthy ? '正常运行' : '离线' }}
             </el-descriptions-item>
             <el-descriptions-item label="数据库">SQLite / PostgreSQL</el-descriptions-item>
-            <el-descriptions-item label="分析模块">9 个（branch_path, boundary_value, error_path, call_graph, concurrency, diff_impact, coverage_map, postmortem, knowledge_pattern）</el-descriptions-item>
+            <el-descriptions-item label="分析模块">11 个核心（branch_path, boundary_value, error_path, call_graph, path_and_resource, exception, protocol, data_flow, concurrency, diff_impact, coverage_map）+ 2 个事后（postmortem, knowledge_pattern）</el-descriptions-item>
             <el-descriptions-item label="部署环境">X86 Linux 内网</el-descriptions-item>
             <el-descriptions-item label="API 基础路径">/api/v1</el-descriptions-item>
           </el-descriptions>

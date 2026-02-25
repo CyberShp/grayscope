@@ -21,6 +21,8 @@ logger = logging.getLogger(__name__)
 # 允许的压缩格式
 ALLOWED_EXTENSIONS = (".zip", ".tar.gz", ".tgz", ".tar")
 MAX_UPLOAD_BYTES = 300 * 1024 * 1024  # 300MB
+# 解压后单文件完整路径最大长度（避免 Windows MAX_PATH 260 等限制）
+MAX_EXTRACT_PATH_LEN = 240
 # 上传仓库的 git_url 占位，sync 时跳过 clone
 UPLOAD_REPO_GIT_URL = "upload"
 
@@ -30,8 +32,10 @@ def _safe_name(name: str) -> str:
     return re.sub(r"[^\w\-.]", "_", name)[:64] or "upload"
 
 
-def _extract_zip(file: BinaryIO, dest: Path) -> None:
-    """解压 zip，禁止路径穿越."""
+def _extract_zip(file: BinaryIO, dest: Path) -> list[str]:
+    """解压 zip，禁止路径穿越；跳过路径过长的文件，返回被跳过的路径列表."""
+    skipped: list[str] = []
+    dest_str = str(dest.resolve())
     with zipfile.ZipFile(file, "r") as zf:
         for info in zf.infolist():
             if info.is_dir():
@@ -42,13 +46,20 @@ def _extract_zip(file: BinaryIO, dest: Path) -> None:
             if name.startswith("./"):
                 name = name[2:]
             target = dest / name
+            full_path = str(target.resolve())
+            if len(full_path) > MAX_EXTRACT_PATH_LEN:
+                skipped.append(name)
+                logger.warning("skip path too long: %s (%d)", name, len(full_path))
+                continue
             target.parent.mkdir(parents=True, exist_ok=True)
             with zf.open(info) as src:
                 target.write_bytes(src.read())
+    return skipped
 
 
-def _extract_tar(file: BinaryIO, dest: Path) -> None:
-    """解压 tar/tar.gz，禁止路径穿越."""
+def _extract_tar(file: BinaryIO, dest: Path) -> list[str]:
+    """解压 tar/tar.gz，禁止路径穿越；跳过路径过长的文件，返回被跳过的路径列表."""
+    skipped: list[str] = []
     file.seek(0)
     with tarfile.open(fileobj=file, mode="r:*") as tf:
         for member in tf.getmembers():
@@ -60,6 +71,11 @@ def _extract_tar(file: BinaryIO, dest: Path) -> None:
             if name.startswith("./"):
                 name = name[2:]
             target = dest / name
+            full_path = str(target.resolve())
+            if len(full_path) > MAX_EXTRACT_PATH_LEN:
+                skipped.append(name)
+                logger.warning("skip path too long: %s (%d)", name, len(full_path))
+                continue
             target.parent.mkdir(parents=True, exist_ok=True)
             try:
                 f = tf.extractfile(member)
@@ -67,6 +83,7 @@ def _extract_tar(file: BinaryIO, dest: Path) -> None:
                     target.write_bytes(f.read())
             except Exception as e:
                 logger.warning("skip extracting %s: %s", name, e)
+    return skipped
 
 
 def create_repo_from_upload(
@@ -112,10 +129,17 @@ def create_repo_from_upload(
     extract_path.mkdir(parents=True, exist_ok=True)
 
     try:
+        skipped_zip: list[str] = []
+        skipped_tar: list[str] = []
         if ext == ".zip":
-            _extract_zip(file, extract_path)
+            skipped_zip = _extract_zip(file, extract_path)
         else:
-            _extract_tar(file, extract_path)
+            skipped_tar = _extract_tar(file, extract_path)
+        skipped = skipped_zip or skipped_tar
+        if skipped:
+            logger.warning("upload skipped %d paths longer than %d chars", len(skipped), MAX_EXTRACT_PATH_LEN)
+    except InvalidRequestError:
+        raise
     except zipfile.BadZipFile as e:
         raise InvalidRequestError(f"无效的 zip 文件: {e}") from e
     except tarfile.ReadError as e:
