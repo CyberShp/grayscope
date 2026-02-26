@@ -15,6 +15,7 @@
 | 分析器模块测试 | **61 / 61 通过** |
 | AI 层测试 | **83 / 83 通过** |
 | API 综合测试 | **126 / 126 通过** |
+| 测试运行 API 测试 | **17 / 17 通过**（test_test_runs_api.py） |
 | 服务层测试 | **67 / 67 通过** |
 | 前端构建 | **成功（0 错误）** |
 | Lint 检查 | **0 错误** |
@@ -52,7 +53,12 @@
 
 ## 3. 后端测试详情
 
-### 3.1 test_ai_layer.py (83 tests)
+### 3.1 运行测试与数据库
+
+- 后端测试使用 SQLite 文件 `./test_grayscope.db`。若新增了表（如 `test_runs`、`test_executions`），首次或报错时建议删除该文件后重跑：`rm -f ./test_grayscope.db && pytest tests/ -v`。
+- `conftest.py` 已显式导入 `TestRun`、`TestExecution`、`TestCase`，确保 `create_all` 时包含所有表。
+
+### 3.2 test_ai_layer.py (83 tests)
 - Provider 基类/实例化：10 tests ✅
 - Prompt 引擎加载/渲染：14 tests ✅
 - AI 增强（提取建议、跨模块、模板映射）：22 tests ✅

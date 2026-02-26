@@ -57,6 +57,8 @@ const systemHealthy = computed(() => appStore.systemHealthy)
 const navItems = [
   { path: '/projects', label: '项目', match: ['/projects'] },
   { path: '/test-design', label: '测试设计', match: ['/test-design'] },
+  { path: '/test-execution', label: '测试执行', match: ['/test-execution'] },
+  { path: '/execution-env', label: '执行环境', match: ['/execution-env'] },
   { path: '/issues', label: '风险发现', match: ['/issues'] },
   { path: '/tasks', label: '任务中心', match: ['/tasks', '/task'] },
   { path: '/analyze', label: '新建分析', match: ['/analyze'] },

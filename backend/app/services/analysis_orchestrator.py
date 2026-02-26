@@ -246,8 +246,9 @@ def run_task(db: Session, task_id: str) -> None:
             warnings = all_warnings
             ctx = first_ctx  # 后续 AI/片段收集用首个目标上下文
 
-            max_per = ctx["options"].get("max_findings_per_module", 150)
-            if len(findings) > max_per:
+            # DT 模式不截断：max_findings_per_module=0 表示不限；仅当用户显式设置 >0 时才截断
+            max_per = ctx["options"].get("max_findings_per_module", 0)
+            if max_per > 0 and len(findings) > max_per:
                 findings = sorted(
                     findings,
                     key=lambda f: (-(f.get("risk_score") or 0), f.get("finding_id", "")),

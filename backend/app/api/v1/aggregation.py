@@ -9,7 +9,7 @@ from typing import List, Optional, Union
 
 from typing import Any, List, Union
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Body
 from pydantic import BaseModel, Field
 from sqlalchemy import func, desc
 from sqlalchemy.orm import Session
@@ -24,6 +24,7 @@ from app.models.repository import Repository
 from app.analyzers.registry import get_display_name
 from app.services.export_service import (
     _findings_to_testcases,
+    get_diff_impact_affected_symbols,
     _risk_type_to_objective,
     _risk_type_to_preconditions,
     _risk_type_to_steps,
@@ -38,6 +39,7 @@ from app.services.testcase_service import (
     update_test_case_status,
     update_test_case,
 )
+from app.services.execution_settings import get_execution_config, save_execution_config
 
 router = APIRouter()
 
@@ -569,7 +571,8 @@ def list_all_tasks(
 
 @router.get("/settings")
 def get_settings() -> dict:
-    """获取系统设置。display_timezone 为部署环境时区，前端据此统一展示时间。"""
+    """获取系统设置。display_timezone 为部署环境时区，前端据此统一展示时间。execution 为测试执行环境（本机 Docker / 远程）。"""
+    execution = get_execution_config()
     return ok({
         "quality_gate": {
             "max_risk_score": 60,
@@ -582,12 +585,15 @@ def get_settings() -> dict:
             "deployment": "intranet",
             "display_timezone": getattr(app_settings, "display_timezone", "Asia/Shanghai"),
         },
+        "execution": execution,
     })
 
 
 @router.put("/settings")
-def update_settings() -> dict:
-    """更新系统设置（占位）。"""
+def update_settings(body: dict = Body(default_factory=dict)) -> dict:
+    """更新系统设置。body 可含 execution（执行环境）、quality_gate 等。"""
+    if "execution" in body:
+        save_execution_config(body["execution"])
     return ok({"message": "设置已更新"})
 
 
@@ -638,11 +644,12 @@ def project_test_cases(
     module_id: Optional[str] = None,
     risk_type: Optional[str] = None,
     persisted: Optional[bool] = Query(default=False, description="若为 true 则返回已持久化的测试用例（可编辑）"),
+    incremental: Optional[bool] = Query(default=False, description="true 时仅返回 diff_impact 影响符号相关用例"),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=50, ge=1, le=200),
     db: Session = Depends(get_db),
 ) -> dict:
-    """项目级测试用例列表。persisted=true 时返回已持久化记录（含 id，可编辑）。"""
+    """项目级测试用例列表。persisted=true 时返回已持久化记录（含 id，可编辑）。incremental=true 时仅返回受 diff_impact 影响的符号对应用例。"""
     if persisted:
         items, total = get_project_test_cases(
             db, project_id, priority=priority, module_id=module_id, page=page, page_size=page_size
@@ -664,7 +671,21 @@ def project_test_cases(
 
     all_findings, ai_data = _collect_findings_for_project(project_id, db)
     task_id_for_tc = f"proj-{project_id:04d}"
-    cases = _findings_to_testcases(task_id_for_tc, all_findings, ai_data)
+    affected_symbols = None
+    if incremental:
+        latest = (
+            db.query(AnalysisTask)
+            .filter(AnalysisTask.project_id == project_id, AnalysisTask.status == "success")
+            .order_by(desc(AnalysisTask.created_at))
+            .first()
+        )
+        if latest and latest.module_results:
+            affected_symbols = get_diff_impact_affected_symbols(latest.module_results)
+            if not affected_symbols:
+                affected_symbols = None
+    cases = _findings_to_testcases(
+        task_id_for_tc, all_findings, ai_data, affected_symbols=affected_symbols
+    )
 
     if priority:
         cases = [c for c in cases if c["priority"].startswith(priority)]
@@ -876,15 +897,18 @@ def _test_case_to_dict(tc: TestCase, db: Session) -> dict:
 @router.get("/test-cases/{test_case_id}/script")
 def get_test_case_script(
     test_case_id: int,
+    format: str = Query(default="cpp", description="脚本格式: cpp (GTest) 或 python"),
     db: Session = Depends(get_db),
 ) -> dict:
-    """获取测试用例的生成脚本（若无则按当前用例生成）。"""
-    from app.services.script_generator import generate_python_script
+    """获取测试用例的生成脚本（若无则按当前用例生成）。format=cpp 为 GTest C++，python 为 Python 占位。"""
+    from app.services.script_generator import generate_script
     tc = get_test_case_by_id(db, test_case_id)
     if not tc:
         return ok({"script": None})
     d = _test_case_to_dict(tc, db)
-    script = getattr(tc, "script_content", None) or generate_python_script(d)
+    script = getattr(tc, "script_content", None)
+    if not script:
+        script = generate_script(d, format=format or "cpp")
     return ok({"script": script})
 
 

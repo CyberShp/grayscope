@@ -5,9 +5,14 @@
         <h2 style="margin:0;font-size:16px;font-weight:600;">代码仓库</h2>
         <p style="margin:4px 0 0;font-size:13px;color:var(--gs-text-muted);">管理本项目关联的代码仓库</p>
       </div>
-      <el-button type="primary" @click="showAdd = true">
-        <el-icon><Plus /></el-icon> 添加仓库
-      </el-button>
+      <div style="display:flex;gap:8px;">
+        <el-button type="primary" @click="showAdd = true">
+          <el-icon><Plus /></el-icon> 添加仓库
+        </el-button>
+        <el-button @click="showUpload = true">
+          <el-icon><Upload /></el-icon> 上传代码压缩包
+        </el-button>
+      </div>
     </div>
 
     <!-- 仓库列表 -->
@@ -108,6 +113,34 @@
       </template>
     </el-dialog>
 
+    <!-- 上传代码压缩包对话框 -->
+    <el-dialog v-model="showUpload" title="上传代码压缩包" width="480px" :close-on-click-modal="false" @closed="resetUploadForm">
+      <el-form :model="uploadForm" label-width="100px">
+        <el-form-item label="仓库名称" required>
+          <el-input v-model="uploadForm.name" placeholder="例如: my-project" maxlength="128" />
+        </el-form-item>
+        <el-form-item label="压缩包" required>
+          <el-upload
+            ref="uploadRef"
+            :auto-upload="false"
+            :limit="1"
+            accept=".zip,.tar,.tar.gz,.tgz"
+            :on-change="onUploadFileChange"
+            :on-remove="onUploadFileRemove"
+          >
+            <el-button type="primary" plain>选择文件</el-button>
+            <template #tip>
+              <div class="gs-form-hint">支持 .zip、.tar、.tar.gz，将解压为仓库根目录</div>
+            </template>
+          </el-upload>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showUpload = false">取消</el-button>
+        <el-button type="primary" @click="submitUpload" :loading="uploading" :disabled="!uploadForm.name.trim() || !uploadFile">上传</el-button>
+      </template>
+    </el-dialog>
+
     <!-- 编辑仓库（鉴权）对话框 -->
     <el-dialog v-model="showEdit" title="编辑仓库" width="560px" :close-on-click-modal="false" @closed="resetEditForm">
       <el-form :model="editRepo" label-width="120px">
@@ -142,7 +175,7 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Refresh, Delete, EditPen } from '@element-plus/icons-vue'
+import { Refresh, Delete, EditPen, Upload } from '@element-plus/icons-vue'
 import { useFormatDate } from '../../composables/useFormatDate.js'
 import api from '../../api.js'
 
@@ -155,6 +188,11 @@ const loading = ref(false)
 const repos = ref([])
 const showAdd = ref(false)
 const adding = ref(false)
+const showUpload = ref(false)
+const uploading = ref(false)
+const uploadForm = ref({ name: '' })
+const uploadFile = ref(null)
+const uploadRef = ref(null)
 const syncingId = ref(null)
 const newRepo = ref({ name: '', git_url: '', default_branch: 'main', auth_type: '', auth_secret_ref: '' })
 const showEdit = ref(false)
@@ -207,6 +245,36 @@ async function addRepo() {
     ElMessage.error('添加失败: ' + e.message)
   } finally {
     adding.value = false
+  }
+}
+
+function onUploadFileChange(file) {
+  uploadFile.value = file?.raw || null
+}
+
+function onUploadFileRemove() {
+  uploadFile.value = null
+}
+
+function resetUploadForm() {
+  uploadForm.value = { name: '' }
+  uploadFile.value = null
+  uploadRef.value?.clearFiles?.()
+}
+
+async function submitUpload() {
+  if (!uploadForm.value.name.trim() || !uploadFile.value) return
+  uploading.value = true
+  try {
+    await api.uploadRepo(props.projectId, uploadFile.value, uploadForm.value.name.trim())
+    ElMessage.success('上传成功，仓库已添加')
+    showUpload.value = false
+    resetUploadForm()
+    await loadRepos()
+  } catch (e) {
+    ElMessage.error('上传失败: ' + (e.message || e))
+  } finally {
+    uploading.value = false
   }
 }
 

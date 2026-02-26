@@ -173,6 +173,8 @@ a:hover {
 }
 .gs-status-dot--success { background: var(--gs-success); }
 .gs-status-dot--running { background: var(--gs-warning); animation: pulse 1.5s infinite; }
+.gs-status-dot--paused { background: var(--gs-warning); }
+.gs-status-dot--cancelled { background: var(--gs-text-muted); }
 .gs-status-dot--failed { background: var(--gs-danger); }
 .gs-status-dot--pending { background: var(--gs-text-muted); }
 

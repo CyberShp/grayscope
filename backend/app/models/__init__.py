@@ -17,6 +17,7 @@ from app.models.risk_finding import RiskFinding
 from app.models.sfmea_entry import SfmeaEntry
 from app.models.test_case import TestCase
 from app.models.test_execution import TestExecution
+from app.models.test_run import TestRun
 
 __all__ = [
     "Base",
@@ -32,6 +33,7 @@ __all__ = [
     "AuditEvent",
     "CoverageImport",
     "TestExecution",
+    "TestRun",
     "CoverageSnapshot",
     "ProtocolCapture",
     "DeviceConfig",

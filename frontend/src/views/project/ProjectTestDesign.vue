@@ -7,7 +7,14 @@
         <p class="gs-page-desc">基于灰盒分析发现，自动生成结构化测试用例建议——这是分析的最终产出物。</p>
       </div>
       <div class="gs-header-actions">
-        <el-button type="primary" @click="exportAll('json')">
+        <el-button
+          type="primary"
+          :loading="generating"
+          @click="generateAndPersist"
+        >
+          <el-icon><Plus /></el-icon> 生成并持久化用例
+        </el-button>
+        <el-button @click="exportAll('json')">
           <el-icon><Download /></el-icon> 导出全部用例
         </el-button>
       </div>
@@ -42,6 +49,10 @@
 
     <!-- 筛选栏 -->
     <div class="gs-filter-bar">
+      <el-radio-group v-model="viewMode" size="default" @change="loadData">
+        <el-radio-button value="suggested">建议用例</el-radio-button>
+        <el-radio-button value="persisted">已持久化用例</el-radio-button>
+      </el-radio-group>
       <el-select v-model="filters.priority" placeholder="优先级" clearable size="default" @change="loadData">
         <el-option label="P0 紧急" value="P0" />
         <el-option label="P1 高优" value="P1" />
@@ -169,7 +180,8 @@
 
 <script setup>
 import { ref, reactive, onMounted, markRaw } from 'vue'
-import { Download, ArrowDown, Aim, List, Guide, CircleCheck, Document, RefreshRight } from '@element-plus/icons-vue'
+import { Download, ArrowDown, Aim, List, Guide, CircleCheck, Document, RefreshRight, Plus } from '@element-plus/icons-vue'
+import { ElMessage } from 'element-plus'
 import api from '../../api.js'
 import { useModuleNames } from '../../composables/useModuleNames.js'
 import { useRiskColor } from '../../composables/useRiskColor.js'
@@ -185,6 +197,7 @@ const { moduleList } = useModuleNames()
 const { riskColor } = useRiskColor()
 
 const loading = ref(false)
+const generating = ref(false)
 const testCases = ref([])
 const allTestCasesForMatrix = ref([])
 const total = ref(0)
@@ -192,6 +205,7 @@ const page = ref(1)
 const pageSize = 30
 const stats = ref(null)
 const expandedId = ref(null)
+const viewMode = ref('suggested')
 const filters = reactive({ priority: '', module_id: '', risk_type: '' })
 
 const moduleOptions = moduleList.map(m => ({ id: m.id, name: m.name }))
@@ -227,6 +241,7 @@ async function loadData() {
   loading.value = true
   try {
     const params = { page: page.value, page_size: pageSize }
+    if (viewMode.value === 'persisted') params.persisted = true
     if (filters.priority) params.priority = filters.priority
     if (filters.module_id) params.module_id = filters.module_id
     if (filters.risk_type) params.risk_type = filters.risk_type
@@ -236,15 +251,32 @@ async function loadData() {
     total.value = data.total || 0
     if (data.stats) stats.value = data.stats
 
-    // 加载全部用例用于优先级矩阵（仅首次）
-    if (allTestCasesForMatrix.value.length === 0) {
+    if (viewMode.value === 'suggested' && allTestCasesForMatrix.value.length === 0) {
       const allData = await api.getProjectTestCases(props.projectId, { page: 1, page_size: 200 })
       allTestCasesForMatrix.value = allData.test_cases || []
     }
+    if (viewMode.value === 'persisted') allTestCasesForMatrix.value = []
   } catch (e) {
     console.error('加载测试用例失败:', e)
   } finally {
     loading.value = false
+  }
+}
+
+async function generateAndPersist() {
+  generating.value = true
+  try {
+    const res = await api.generateProjectTestCases(Number(props.projectId))
+    const n = res?.generated ?? 0
+    ElMessage.success(`已持久化 ${n} 条用例`)
+    viewMode.value = 'persisted'
+    page.value = 1
+    allTestCasesForMatrix.value = []
+    await loadData()
+  } catch (e) {
+    ElMessage.error('生成并持久化失败: ' + (e?.message || e))
+  } finally {
+    generating.value = false
   }
 }
 

@@ -56,6 +56,7 @@ const tabs = [
   { name: 'ProjectOverview', label: '概览', icon: 'Odometer', match: 'overview' },
   { name: 'ProjectRepos', label: '仓库', icon: 'FolderOpened', match: 'repos' },
   { name: 'ProjectTestDesign', label: '测试设计', icon: 'EditPen', match: 'test-design' },
+  { name: 'ProjectTestExecution', label: '测试执行', icon: 'VideoPlay', match: 'test-execution' },
   { name: 'ProjectIssues', label: '风险发现', icon: 'Warning', match: 'issues' },
   { name: 'ProjectMeasures', label: '度量', icon: 'TrendCharts', match: 'measures' },
   { name: 'ProjectCode', label: '代码', icon: 'Document', match: 'code' },

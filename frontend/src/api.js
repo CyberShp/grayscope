@@ -7,8 +7,17 @@ async function request(method, path, body = null) {
   }
   if (body) opts.body = JSON.stringify(body)
   const res = await fetch(`${BASE}${path}`, opts)
-  const data = await res.json()
-  if (!res.ok) throw new Error(data.message || res.statusText)
+  let data
+  const contentType = res.headers.get('content-type') || ''
+  try {
+    data = contentType.includes('application/json') ? await res.json() : {}
+  } catch {
+    data = { message: res.statusText || '网络错误', detail: '响应非 JSON' }
+  }
+  if (!res.ok) {
+    const msg = data.detail || data.message || (Array.isArray(data.detail) ? data.detail.map(d => d.msg || d).join('; ') : res.statusText)
+    throw new Error(msg)
+  }
   return data.data !== undefined ? data.data : data
 }
 
@@ -100,14 +109,51 @@ export default {
     const qs = new URLSearchParams(params).toString()
     return request('GET', `/projects/${projectId}/test-cases${qs ? '?' + qs : ''}`)
   },
+  generateProjectTestCases: (projectId) =>
+    request('POST', `/projects/${projectId}/test-cases/generate`, {}),
   getAllTestCases: (params = {}) => {
     const qs = new URLSearchParams(params).toString()
     return request('GET', `/test-cases${qs ? '?' + qs : ''}`)
   },
   getTestCase: (id) => request('GET', `/test-cases/${id}`),
-  getTestCaseScript: (id) => request('GET', `/test-cases/${id}/script`),
+  getTestCaseScript: (id, format = 'cpp') => {
+    const q = format ? `?format=${encodeURIComponent(format)}` : ''
+    return request('GET', `/test-cases/${id}/script${q}`)
+  },
   updateTestCase: (id, body) => request('PATCH', `/test-cases/${id}`, body),
   getTestCaseTemplate: () => request('GET', '/test-cases/template'),
   getFindingTestSuggestion: (findingId) =>
     request('GET', `/findings/${encodeURIComponent(findingId)}/test-suggestion`),
+
+  // ── 测试执行 ──────────────────────────
+  createTestRun: (body) => request('POST', '/test-runs', body),
+  listTestRuns: (params = {}) => {
+    const qs = new URLSearchParams(params).toString()
+    return request('GET', `/test-runs${qs ? '?' + qs : ''}`)
+  },
+  getTestRun: (runId) => request('GET', `/test-runs/${runId}`),
+  executeTestRun: (runId) => request('POST', `/test-runs/${runId}/execute`, {}),
+  rerunTestRun: (runId) => request('POST', `/test-runs/${runId}/rerun`, {}),
+  pauseTestRun: (runId) => request('POST', `/test-runs/${runId}/pause`, {}),
+  cancelTestRun: (runId) => request('POST', `/test-runs/${runId}/cancel`, {}),
+  deleteTestRun: (runId) => request('DELETE', `/test-runs/${runId}`),
+  getTestCaseExecutions: (testCaseId) => request('GET', `/test-cases/${testCaseId}/executions`),
+
+  // ── 执行环境（Docker 镜像/容器）────────────────────────────────────
+  listEnvImages: () => request('GET', '/execution-env/images'),
+  pullEnvImage: (image) => request('POST', '/execution-env/images/pull', { image }),
+  loadEnvImage: async (file) => {
+    const form = new FormData()
+    form.append('file', file)
+    const res = await fetch(`${BASE}/execution-env/images/load`, { method: 'POST', body: form })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.detail || data.message || res.statusText)
+    return data.data !== undefined ? data.data : data
+  },
+  listEnvContainers: (all = true) => request('GET', `/execution-env/containers?all=${all}`),
+  createEnvContainer: (body) => request('POST', '/execution-env/containers', body),
+  startEnvContainer: (id) => request('POST', `/execution-env/containers/${id}/start`, {}),
+  stopEnvContainer: (id) => request('POST', `/execution-env/containers/${id}/stop`, {}),
+  removeEnvContainer: (id, force = false) => request('DELETE', `/execution-env/containers/${id}?force=${force}`),
+  getEnvContainer: (id) => request('GET', `/execution-env/containers/${id}`),
 }

@@ -105,13 +105,41 @@ def _critical_combination_to_export_item(
 _SEV_PRIORITY = {"S0": "P0-紧急", "S1": "P1-高", "S2": "P2-中", "S3": "P3-低"}
 
 
+def get_diff_impact_affected_symbols(module_results: list) -> set[str]:
+    """从任务的 diff_impact 模块结果中提取受变更影响的符号集合，供增量测试生成。"""
+    out: set[str] = set()
+    for mr in module_results or []:
+        if getattr(mr, "module_id", None) != "diff_impact" or not getattr(mr, "findings_json", None):
+            continue
+        try:
+            findings = json.loads(mr.findings_json)
+        except (TypeError, json.JSONDecodeError):
+            continue
+        for f in findings:
+            sym = f.get("symbol_name", "")
+            if sym:
+                out.add(sym)
+            ev = f.get("evidence", {}) or {}
+            for name in ev.get("impacted_callers") or []:
+                if name:
+                    out.add(name)
+            for name in ev.get("impacted_callees") or []:
+                if name:
+                    out.add(name)
+    return out
+
+
 def _findings_to_testcases(
     task_id: str,
     all_findings: list[dict[str, Any]],
     ai_data: dict[str, Any],
     symbol_to_related: dict[str, list[str]] | None = None,
+    affected_symbols: set[str] | None = None,
 ) -> list[dict[str, Any]]:
-    """将发现转换为结构化测试用例建议。symbol_to_related 用于 P3：由 data_flow 为 boundary 等补全 related_functions。"""
+    """将发现转换为结构化测试用例建议。symbol_to_related 用于 P3：由 data_flow 为 boundary 等补全 related_functions。
+    若提供 affected_symbols（来自 diff_impact），则仅保留 symbol_name 在该集合中的发现（增量测试生成）。"""
+    if affected_symbols is not None:
+        all_findings = [f for f in all_findings if (f.get("symbol_name") or "") in affected_symbols]
     cases: list[dict[str, Any]] = []
     tc_id = 0
 

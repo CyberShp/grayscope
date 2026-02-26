@@ -220,6 +220,15 @@ async function loadModels() {
   }
 }
 
+async function loadSettings() {
+  try {
+    const data = await api.getSettings()
+    if (data?.quality_gate) {
+      qualityGate.value = { ...qualityGate.value, ...data.quality_gate }
+    }
+  } catch (_) {}
+}
+
 async function testProvider(m) {
   m._testing = true
   const body = { provider: m.provider_id || m.name, model: m.models?.[0] || 'default' }
@@ -301,6 +310,7 @@ function resetQualityGate() {
 
 onMounted(() => {
   loadModels()
+  loadSettings()
   // Restore saved defaults
   const savedProvider = localStorage.getItem('gs_default_provider')
   const savedModel = localStorage.getItem('gs_default_model')

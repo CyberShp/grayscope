@@ -9,6 +9,8 @@ from sqlalchemy.orm import sessionmaker
 from app.main import app
 from app.core.database import get_db
 from app.models import Base
+# 确保所有表注册到 Base.metadata（含 test_runs, test_executions）
+from app.models import TestRun, TestExecution, TestCase  # noqa: F401
 
 # ── File-based SQLite for test isolation ─────────────────────────
 TEST_DATABASE_URL = "sqlite:///./test_grayscope.db"

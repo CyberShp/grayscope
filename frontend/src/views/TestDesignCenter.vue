@@ -6,11 +6,18 @@
         <h1 class="gs-page-title">测试设计中心</h1>
         <p class="gs-page-desc">跨项目查看所有灰盒分析生成的测试用例建议——从风险发现到测试设计的桥梁。</p>
       </div>
+      <el-button v-if="filters.project_id" type="primary" size="small" :loading="generating" @click="generateAndPersist">
+        <el-icon><Plus /></el-icon> 生成并持久化用例
+      </el-button>
       <el-button size="small" @click="downloadTemplate">下载灰盒用例模板</el-button>
     </div>
 
     <!-- 筛选栏 -->
     <div class="gs-filter-bar">
+      <el-radio-group v-model="viewMode" size="default" @change="loadData">
+        <el-radio-button value="suggested">建议用例</el-radio-button>
+        <el-radio-button value="persisted">已持久化用例</el-radio-button>
+      </el-radio-group>
       <el-select v-model="filters.project_id" placeholder="选择项目" clearable size="default" @change="loadData">
         <el-option v-for="p in projects" :key="p.project_id" :label="p.name" :value="p.project_id" />
       </el-select>
@@ -31,12 +38,14 @@
     <!-- 用例列表 -->
     <div class="gs-testcase-list" v-loading="loading">
       <div v-if="!loading && testCases.length === 0" class="gs-empty">
-        <el-empty description="暂无测试用例，请先运行分析任务" />
+        <el-empty
+          :description="viewMode === 'persisted' && !filters.project_id ? '请选择项目以查看已持久化用例' : '暂无测试用例，请先运行分析任务'"
+        />
       </div>
 
       <div
         v-for="tc in testCases"
-        :key="tc.test_case_id"
+        :key="tc.id ?? tc.test_case_id"
         class="gs-testcase-card"
         @click="openDetail(tc)"
       >
@@ -45,7 +54,7 @@
             <span class="gs-tc-priority" :class="priorityClass(tc.priority)">
               {{ tc.priority.split('-')[0] }}
             </span>
-            <span class="gs-tc-id">{{ tc.test_case_id }}</span>
+            <span class="gs-tc-id">{{ tc.case_id || tc.test_case_id }}</span>
             <span class="gs-tc-module-tag">{{ tc.module_display_name }}</span>
             <span v-if="tc.project_id" class="gs-tc-project-tag">
               {{ getProjectName(tc.project_id) }}
@@ -89,9 +98,10 @@
 <script setup>
 import { ref, reactive, onMounted, computed, toRaw } from 'vue'
 import { useRouter } from 'vue-router'
-import { ArrowRight, Aim, RefreshRight } from '@element-plus/icons-vue'
+import { ArrowRight, Aim, RefreshRight, Plus } from '@element-plus/icons-vue'
 import api from '../api.js'
 import { useAppStore } from '../stores/app.js'
+import { ElMessage } from 'element-plus'
 import { useModuleNames } from '../composables/useModuleNames.js'
 import { useRiskColor } from '../composables/useRiskColor.js'
 
@@ -117,11 +127,13 @@ async function downloadTemplate() {
 const router = useRouter()
 
 const loading = ref(false)
+const generating = ref(false)
 const testCases = ref([])
 const total = ref(0)
 const page = ref(1)
 const pageSize = 30
 const filters = reactive({ project_id: '', priority: '', module_id: '' })
+const viewMode = ref('suggested')
 
 const projects = computed(() => appStore.projects || [])
 const moduleOptions = moduleList.map(m => ({ id: m.id, name: m.name }))
@@ -137,9 +149,10 @@ function priorityClass(p) {
 
 function openDetail(tc) {
   const plainTc = JSON.parse(JSON.stringify(toRaw(tc)))
+  const id = tc.id != null ? tc.id : tc.test_case_id
   router.push({
     name: 'TestCaseDetail',
-    params: { testCaseId: tc.test_case_id },
+    params: { testCaseId: String(id) },
     state: { tc: plainTc },
   })
 }
@@ -155,6 +168,21 @@ function resetFilters() {
 async function loadData() {
   loading.value = true
   try {
+    if (viewMode.value === 'persisted') {
+      if (!filters.project_id) {
+        testCases.value = []
+        total.value = 0
+        loading.value = false
+        return
+      }
+      const params = { page: page.value, page_size: pageSize, persisted: true }
+      if (filters.priority) params.priority = filters.priority
+      if (filters.module_id) params.module_id = filters.module_id
+      const data = await api.getProjectTestCases(filters.project_id, params)
+      testCases.value = data.test_cases || []
+      total.value = data.total || 0
+      return
+    }
     const params = { page: page.value, page_size: pageSize }
     if (filters.project_id) params.project_id = filters.project_id
     if (filters.priority) params.priority = filters.priority
@@ -167,6 +195,26 @@ async function loadData() {
     console.error('加载测试用例失败:', e)
   } finally {
     loading.value = false
+  }
+}
+
+async function generateAndPersist() {
+  if (!filters.project_id) {
+    ElMessage.warning('请先选择项目')
+    return
+  }
+  generating.value = true
+  try {
+    const res = await api.generateProjectTestCases(Number(filters.project_id))
+    const n = res?.generated ?? 0
+    ElMessage.success(`已持久化 ${n} 条用例`)
+    viewMode.value = 'persisted'
+    page.value = 1
+    await loadData()
+  } catch (e) {
+    ElMessage.error('生成并持久化失败: ' + (e?.message || e))
+  } finally {
+    generating.value = false
   }
 }
 
