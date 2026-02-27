@@ -54,13 +54,18 @@
         <el-tag type="warning" size="small">{{ progress.current_step || '准备中...' }}</el-tag>
       </template>
       <el-progress :percentage="progress.progress_percent || 0" :stroke-width="20" striped striped-flow />
+      <div class="gs-progress-meta">
+        <span v-if="progress.elapsed_seconds">已用时: {{ formatDuration(progress.elapsed_seconds) }}</span>
+        <span v-if="progress.estimated_remaining">预计剩余: {{ formatDuration(progress.estimated_remaining) }}</span>
+      </div>
       <div class="gs-progress-steps">
-        <div v-for="step in progress.steps" :key="step.name" class="gs-progress-step">
+        <div v-for="step in progress.steps" :key="step.name" class="gs-progress-step" :class="{ 'gs-step-active': step.status === 'running' }">
           <el-icon v-if="step.status === 'completed'" class="gs-step-icon gs-step-done"><CircleCheck /></el-icon>
           <el-icon v-else-if="step.status === 'running'" class="gs-step-icon gs-step-running"><Loading /></el-icon>
           <el-icon v-else-if="step.status === 'failed'" class="gs-step-icon gs-step-failed"><CircleClose /></el-icon>
           <el-icon v-else class="gs-step-icon"><Clock /></el-icon>
           <span>{{ step.name }}</span>
+          <span v-if="step.duration_ms" class="gs-step-duration">({{ (step.duration_ms / 1000).toFixed(1) }}s)</span>
         </div>
       </div>
     </el-card>
@@ -96,42 +101,74 @@
 
       <el-tabs v-model="activeTab" type="border-card">
         <!-- 调用图 -->
-        <el-tab-pane label="调用图" name="callgraph">
+        <el-tab-pane name="callgraph">
+          <template #label>
+            调用图
+            <el-badge v-if="callGraph.nodes?.length" :value="callGraph.nodes.length" class="gs-tab-badge" type="info" />
+          </template>
           <FusedCallGraph :data="callGraph" />
         </el-tab-pane>
 
         <!-- 风险发现 -->
-        <el-tab-pane label="风险发现" name="risks">
+        <el-tab-pane name="risks">
+          <template #label>
+            风险发现
+            <el-badge v-if="risks.findings?.length" :value="risks.findings.length" class="gs-tab-badge" :type="risks.summary?.severity_distribution?.critical ? 'danger' : 'warning'" />
+          </template>
           <RiskFindings :findings="risks.findings" :summary="risks.summary" />
         </el-tab-pane>
 
         <!-- 风险卡片 -->
-        <el-tab-pane label="风险卡片" name="risk-cards">
+        <el-tab-pane name="risk-cards">
+          <template #label>
+            风险卡片
+            <el-badge v-if="riskCards?.length" :value="riskCards.length" class="gs-tab-badge" type="warning" />
+          </template>
           <RiskScenarioCards :cards="riskCards" />
         </el-tab-pane>
 
         <!-- 业务流程叙事 -->
-        <el-tab-pane label="流程叙事" name="narratives">
+        <el-tab-pane name="narratives">
+          <template #label>
+            流程叙事
+            <el-badge v-if="narratives.flow_narratives?.length" :value="narratives.flow_narratives.length" class="gs-tab-badge" type="primary" />
+          </template>
           <FlowNarratives :narratives="narratives.flow_narratives" />
         </el-tab-pane>
 
         <!-- 函数词典 -->
-        <el-tab-pane label="函数词典" name="function-dict">
+        <el-tab-pane name="function-dict">
+          <template #label>
+            函数词典
+            <el-badge v-if="Object.keys(functionDict || {}).length" :value="Object.keys(functionDict).length" class="gs-tab-badge" type="info" />
+          </template>
           <FunctionDictionary :dictionary="functionDict" />
         </el-tab-pane>
 
         <!-- What-If 场景 -->
-        <el-tab-pane label="What-If" name="what-if">
+        <el-tab-pane name="what-if">
+          <template #label>
+            What-If
+            <el-badge v-if="whatIfScenarios?.length" :value="whatIfScenarios.length" class="gs-tab-badge" type="primary" />
+          </template>
           <WhatIfScenarios :scenarios="whatIfScenarios" />
         </el-tab-pane>
 
         <!-- 测试矩阵 -->
-        <el-tab-pane label="测试矩阵" name="test-matrix">
+        <el-tab-pane name="test-matrix">
+          <template #label>
+            测试矩阵
+            <el-badge v-if="testMatrix.test_cases?.length" :value="testMatrix.test_cases.length" class="gs-tab-badge" type="success" />
+          </template>
           <TestDesignMatrix :matrix="testMatrix" />
         </el-tab-pane>
 
         <!-- 协议状态机 -->
-        <el-tab-pane label="协议状态机" name="protocol-sm">
+        <el-tab-pane name="protocol-sm">
+          <template #label>
+            协议状态机
+            <el-badge v-if="protocolSM.states?.length" :value="protocolSM.states.length" class="gs-tab-badge" type="info" />
+          </template>
           <ProtocolStateMachine :data="protocolSM" />
         </el-tab-pane>
       </el-tabs>
@@ -272,6 +309,14 @@ function resetAnalysis() {
   protocolSM.value = {}
 }
 
+function formatDuration(seconds) {
+  if (!seconds || seconds < 0) return '--'
+  if (seconds < 60) return `${seconds.toFixed(0)}秒`
+  const mins = Math.floor(seconds / 60)
+  const secs = Math.round(seconds % 60)
+  return secs > 0 ? `${mins}分${secs}秒` : `${mins}分`
+}
+
 onMounted(() => {
   const saved = localStorage.getItem('gs_default_provider')
   if (saved) form.value.ai_provider = saved === 'custom' ? 'custom' : 'deepseek'
@@ -333,5 +378,27 @@ onUnmounted(() => {
 .gs-result-actions {
   display: flex;
   gap: 8px;
+}
+.gs-progress-meta {
+  display: flex;
+  gap: 24px;
+  margin-top: 8px;
+  font-size: 13px;
+  color: var(--el-text-color-secondary);
+}
+.gs-step-duration {
+  font-size: 11px;
+  color: var(--el-text-color-placeholder);
+  margin-left: 2px;
+}
+.gs-step-active {
+  font-weight: 500;
+  color: var(--el-color-primary);
+}
+.gs-tab-badge {
+  margin-left: 6px;
+}
+.gs-tab-badge :deep(.el-badge__content) {
+  font-size: 11px;
 }
 </style>

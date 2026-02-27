@@ -1,7 +1,7 @@
 # GrayScope 灰盒测试分析平台 - Makefile
 # 常用开发和部署命令
 
-.PHONY: backend frontend cli-health cli-analyze docker-up docker-down docker-prod build-frontend clean help
+.PHONY: backend frontend cli-health cli-analyze docker-up docker-down docker-prod build-frontend clean help test test-backend test-frontend test-cov
 
 # ── 本地开发 ──────────────────────────────────────────────────────────
 
@@ -58,6 +58,27 @@ clean:
 clean-db:
 	rm -f backend/grayscope.db
 
+# ── 测试 ──────────────────────────────────────────────────────────────
+
+## 运行所有测试
+test: test-backend test-frontend
+
+## 运行后端测试
+test-backend:
+	cd backend && source .venv/bin/activate && pytest tests/ -v
+
+## 运行后端测试（带覆盖率）
+test-backend-cov:
+	cd backend && source .venv/bin/activate && pytest tests/ -v --cov=app --cov-report=html --cov-report=term
+
+## 运行前端测试
+test-frontend:
+	cd frontend && npm run test:run
+
+## 运行前端测试（带覆盖率）
+test-frontend-cov:
+	cd frontend && npm run test:coverage
+
 # ── 帮助 ──────────────────────────────────────────────────────────────
 
 ## 显示可用命令
@@ -65,14 +86,19 @@ help:
 	@echo ""
 	@echo "GrayScope 灰盒测试分析平台 - 可用命令"
 	@echo "────────────────────────────────────────"
-	@echo "  make backend        启动后端开发服务器"
-	@echo "  make frontend       启动前端开发服务器"
-	@echo "  make cli-health     CLI 健康检查"
-	@echo "  make cli-analyze    CLI 创建分析任务"
-	@echo "  make docker-dev     Docker 开发环境"
-	@echo "  make docker-prod    生产部署"
-	@echo "  make docker-down    停止 Docker 服务"
-	@echo "  make build-frontend 构建前端静态文件"
-	@echo "  make clean          清理所有生成文件"
-	@echo "  make clean-db       清理数据库"
+	@echo "  make backend           启动后端开发服务器"
+	@echo "  make frontend          启动前端开发服务器"
+	@echo "  make cli-health        CLI 健康检查"
+	@echo "  make cli-analyze       CLI 创建分析任务"
+	@echo "  make docker-dev        Docker 开发环境"
+	@echo "  make docker-prod       生产部署"
+	@echo "  make docker-down       停止 Docker 服务"
+	@echo "  make build-frontend    构建前端静态文件"
+	@echo "  make test              运行所有测试"
+	@echo "  make test-backend      运行后端测试"
+	@echo "  make test-backend-cov  后端测试+覆盖率"
+	@echo "  make test-frontend     运行前端测试"
+	@echo "  make test-frontend-cov 前端测试+覆盖率"
+	@echo "  make clean             清理所有生成文件"
+	@echo "  make clean-db          清理数据库"
 	@echo ""

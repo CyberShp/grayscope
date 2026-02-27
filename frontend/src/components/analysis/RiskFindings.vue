@@ -23,20 +23,25 @@
       <el-input v-model="searchKeyword" placeholder="搜索..." clearable size="small" style="width:180px" />
     </div>
 
-    <el-table :data="filteredFindings" stripe style="width:100%" max-height="500">
-      <el-table-column prop="finding_id" label="ID" width="100" />
-      <el-table-column prop="risk_type" label="类型" width="140">
+    <el-table :data="filteredFindings" stripe style="width:100%" max-height="500" @sort-change="handleSortChange">
+      <el-table-column prop="finding_id" label="ID" width="100" sortable="custom" />
+      <el-table-column prop="risk_type" label="类型" width="140" sortable="custom">
         <template #default="{ row }">
           <el-tag size="small" :type="riskTypeTag(row.risk_type)">{{ row.risk_type }}</el-tag>
         </template>
       </el-table-column>
-      <el-table-column prop="severity" label="严重程度" width="100">
+      <el-table-column prop="severity" label="严重程度" width="100" sortable="custom">
         <template #default="{ row }">
           <el-tag :type="severityTag(row.severity)" size="small">{{ row.severity }}</el-tag>
         </template>
       </el-table-column>
-      <el-table-column prop="description" label="描述" min-width="250" show-overflow-tooltip />
-      <el-table-column prop="call_chain" label="调用链" min-width="200">
+      <el-table-column prop="risk_score" label="评分" width="90" sortable="custom">
+        <template #default="{ row }">
+          <span :style="{ color: scoreColor(row.risk_score) }">{{ (row.risk_score * 100).toFixed(0) }}%</span>
+        </template>
+      </el-table-column>
+      <el-table-column prop="description" label="描述" min-width="220" show-overflow-tooltip />
+      <el-table-column prop="call_chain" label="调用链" min-width="180">
         <template #default="{ row }">
           <span class="gs-chain">{{ (row.call_chain || []).slice(0, 3).join(' → ') }}{{ row.call_chain?.length > 3 ? '...' : '' }}</span>
         </template>
@@ -88,11 +93,15 @@ const filterType = ref('')
 const searchKeyword = ref('')
 const dialogVisible = ref(false)
 const selectedFinding = ref(null)
+const sortProp = ref('')
+const sortOrder = ref('')
 
 const riskTypes = computed(() => {
   const types = new Set((props.findings || []).map(f => f.risk_type))
   return Array.from(types).sort()
 })
+
+const severityOrder = { critical: 0, high: 1, medium: 2, low: 3 }
 
 const filteredFindings = computed(() => {
   let list = props.findings || []
@@ -110,6 +119,29 @@ const filteredFindings = computed(() => {
       f.call_chain?.some(c => c.toLowerCase().includes(kw))
     )
   }
+  
+  // Apply sorting
+  if (sortProp.value && sortOrder.value) {
+    list = [...list].sort((a, b) => {
+      let valA, valB
+      
+      if (sortProp.value === 'severity') {
+        valA = severityOrder[a.severity] ?? 4
+        valB = severityOrder[b.severity] ?? 4
+      } else if (sortProp.value === 'risk_score') {
+        valA = a.risk_score ?? 0
+        valB = b.risk_score ?? 0
+      } else {
+        valA = a[sortProp.value] ?? ''
+        valB = b[sortProp.value] ?? ''
+      }
+      
+      if (valA < valB) return sortOrder.value === 'ascending' ? -1 : 1
+      if (valA > valB) return sortOrder.value === 'ascending' ? 1 : -1
+      return 0
+    })
+  }
+  
   return list
 })
 
@@ -123,6 +155,18 @@ function riskTypeTag(type) {
   if (type?.includes('leak') || type?.includes('resource')) return 'warning'
   if (type?.includes('protocol')) return 'primary'
   return ''
+}
+
+function handleSortChange({ prop, order }) {
+  sortProp.value = prop
+  sortOrder.value = order
+}
+
+function scoreColor(score) {
+  if (score >= 0.8) return '#F56C6C'
+  if (score >= 0.6) return '#E6A23C'
+  if (score >= 0.4) return '#409EFF'
+  return '#67C23A'
 }
 
 function showDetail(finding) {

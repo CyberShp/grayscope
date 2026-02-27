@@ -3,7 +3,7 @@ Comprehensive tests for GrayScope AI layer.
 
 Covers:
   - Provider base class and registry
-  - Individual provider construction (Ollama, DeepSeek, Qwen, OpenAICompat, CustomREST)
+  - Individual provider construction (DeepSeek, Custom)
   - Prompt engine: template loading, rendering, cache, reload
   - AI enrichment service: enrich_module, synthesize_cross_module
   - Helper functions: _extract_test_suggestions, _build_cross_context
@@ -51,113 +51,6 @@ class TestProviderBase:
 # 2. PROVIDER CONSTRUCTION TESTS
 # ═══════════════════════════════════════════════════════════════════
 
-class TestOllamaProvider:
-    """Tests for OllamaProvider."""
-
-    def test_construction_defaults(self):
-        """TS-OL-001: Default construction."""
-        from app.ai.providers.ollama import OllamaProvider
-        p = OllamaProvider()
-        assert p.name() == "ollama"
-        assert p._base_url == "http://localhost:11434"
-        assert p._default_model == "qwen2.5-coder"
-
-    def test_construction_custom(self):
-        """TS-OL-002: Custom URL and model."""
-        from app.ai.providers.ollama import OllamaProvider
-        p = OllamaProvider(base_url="http://custom:8080/", default_model="llama3")
-        assert p._base_url == "http://custom:8080"  # trailing slash stripped
-        assert p._default_model == "llama3"
-
-    def test_chat_request_format(self):
-        """TS-OL-003: Chat builds correct payload."""
-        from app.ai.providers.ollama import OllamaProvider
-        p = OllamaProvider()
-
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            "choices": [{"message": {"content": "test reply"}}],
-            "usage": {"prompt_tokens": 10, "completion_tokens": 5},
-        }
-        mock_response.raise_for_status = MagicMock()
-
-        async def run_test():
-            with patch("httpx.AsyncClient") as mock_client_cls:
-                mock_client = AsyncMock()
-                mock_client.post = AsyncMock(return_value=mock_response)
-                mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
-                mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
-
-                result = await p.chat(
-                    [{"role": "user", "content": "hello"}],
-                    model="test-model",
-                )
-                assert result["content"] == "test reply"
-                assert result["usage"]["prompt_tokens"] == 10
-
-        asyncio.get_event_loop().run_until_complete(run_test())
-
-    def test_health_check_success(self):
-        """TS-OL-004: Health check returns True on 200."""
-        from app.ai.providers.ollama import OllamaProvider
-        p = OllamaProvider()
-
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-
-        async def run_test():
-            with patch("httpx.AsyncClient") as mock_client_cls:
-                mock_client = AsyncMock()
-                mock_client.get = AsyncMock(return_value=mock_response)
-                mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
-                mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
-
-                result = await p.health_check()
-                assert result is True
-
-        asyncio.get_event_loop().run_until_complete(run_test())
-
-    def test_health_check_failure(self):
-        """TS-OL-005: Health check returns False on exception."""
-        from app.ai.providers.ollama import OllamaProvider
-        p = OllamaProvider()
-
-        async def run_test():
-            with patch("httpx.AsyncClient") as mock_client_cls:
-                mock_client = AsyncMock()
-                mock_client.get = AsyncMock(side_effect=Exception("connection refused"))
-                mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
-                mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
-
-                result = await p.health_check()
-                assert result is False
-
-        asyncio.get_event_loop().run_until_complete(run_test())
-
-    def test_chat_empty_choices(self):
-        """TS-OL-006: Chat handles empty choices gracefully."""
-        from app.ai.providers.ollama import OllamaProvider
-        p = OllamaProvider()
-
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {"choices": [], "usage": {}}
-        mock_response.raise_for_status = MagicMock()
-
-        async def run_test():
-            with patch("httpx.AsyncClient") as mock_client_cls:
-                mock_client = AsyncMock()
-                mock_client.post = AsyncMock(return_value=mock_response)
-                mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
-                mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
-
-                result = await p.chat([{"role": "user", "content": "test"}])
-                assert result["content"] == ""
-
-        asyncio.get_event_loop().run_until_complete(run_test())
-
-
 class TestDeepSeekProvider:
     """Tests for DeepSeekProvider."""
 
@@ -191,107 +84,157 @@ class TestDeepSeekProvider:
         assert p._base_url == "https://api.deepseek.com"
 
 
-class TestQwenProvider:
-    """Tests for QwenProvider."""
+class TestCustomProvider:
+    """Tests for CustomProvider (unified OpenAI-compatible provider)."""
 
-    def test_construction(self):
-        """TS-QW-001: Default construction."""
-        from app.ai.providers.qwen import QwenProvider
-        p = QwenProvider(api_key="qwen-key")
-        assert p.name() == "qwen"
-        assert p._default_model == "qwen-plus"
-        assert "dashscope" in p._base_url
-
-    def test_headers(self):
-        """TS-QW-002: Headers format."""
-        from app.ai.providers.qwen import QwenProvider
-        p = QwenProvider(api_key="test")
-        h = p._headers()
-        assert h["Authorization"] == "Bearer test"
-
-
-class TestOpenAICompatProvider:
-    """Tests for OpenAICompatProvider."""
-
-    def test_construction(self):
-        """TS-OC-001: Construction with parameters."""
-        from app.ai.providers.openai_compat import OpenAICompatProvider
-        p = OpenAICompatProvider(
-            base_url="http://vllm:8000",
-            api_key="key",
-            default_model="mistral-7b",
-        )
-        assert p.name() == "openai_compat"
-        assert p._default_model == "mistral-7b"
-
-    def test_headers_with_key(self):
-        """TS-OC-002: Auth header present when key provided."""
-        from app.ai.providers.openai_compat import OpenAICompatProvider
-        p = OpenAICompatProvider(base_url="http://x", api_key="apikey")
-        h = p._headers()
-        assert h["Authorization"] == "Bearer apikey"
-
-
-class TestCustomRESTProvider:
-    """Tests for CustomRESTProvider."""
-
-    def test_construction(self):
-        """TS-CR-001: Default construction."""
-        from app.ai.providers.custom_rest import CustomRESTProvider
-        p = CustomRESTProvider()
-        assert p.name() == "custom_rest"
-        assert p._default_model == "distill-v1"
+    def test_construction_defaults(self):
+        """TS-CP-001: Default construction."""
+        from app.ai.providers.custom import CustomProvider
+        p = CustomProvider()
+        assert p.name() == "custom"
+        assert p._base_url == "http://localhost:8000"
+        assert p._default_model == "default"
         assert p._chat_path == "/v1/chat/completions"
-        assert p._health_path == "/health"
+        assert p._health_path == "/v1/models"
 
-    def test_custom_paths(self):
-        """TS-CR-002: Custom chat and health paths."""
-        from app.ai.providers.custom_rest import CustomRESTProvider
-        p = CustomRESTProvider(
+    def test_construction_custom(self):
+        """TS-CP-002: Custom URL, model, and paths."""
+        from app.ai.providers.custom import CustomProvider
+        p = CustomProvider(
+            base_url="http://vllm:8080/",
+            api_key="secret",
+            default_model="mistral-7b",
             chat_path="/api/generate",
             health_path="/api/health",
         )
+        assert p._base_url == "http://vllm:8080"  # trailing slash stripped
+        assert p._api_key == "secret"
+        assert p._default_model == "mistral-7b"
         assert p._chat_path == "/api/generate"
         assert p._health_path == "/api/health"
 
+    def test_headers_with_key(self):
+        """TS-CP-003: Headers include Authorization when api_key set."""
+        from app.ai.providers.custom import CustomProvider
+        p = CustomProvider(api_key="apikey")
+        h = p._headers()
+        assert h["Authorization"] == "Bearer apikey"
+        assert h["Content-Type"] == "application/json"
+
+    def test_headers_without_key(self):
+        """TS-CP-004: Headers omit Authorization when no api_key."""
+        from app.ai.providers.custom import CustomProvider
+        p = CustomProvider()
+        h = p._headers()
+        assert "Authorization" not in h
+
     def test_extract_nested_key(self):
-        """TS-CR-003: _extract navigates nested dict/list."""
-        from app.ai.providers.custom_rest import CustomRESTProvider
+        """TS-CP-005: _extract navigates nested dict/list."""
+        from app.ai.providers.custom import CustomProvider
         data = {
             "choices": [
                 {"message": {"content": "hello world"}},
             ],
         }
-        result = CustomRESTProvider._extract(data, "choices.0.message.content")
+        result = CustomProvider._extract(data, "choices.0.message.content")
         assert result == "hello world"
 
     def test_extract_missing_key(self):
-        """TS-CR-004: _extract returns empty string on missing key."""
-        from app.ai.providers.custom_rest import CustomRESTProvider
+        """TS-CP-006: _extract returns empty string on missing key."""
+        from app.ai.providers.custom import CustomProvider
         data = {"foo": "bar"}
-        result = CustomRESTProvider._extract(data, "choices.0.message.content")
+        result = CustomProvider._extract(data, "choices.0.message.content")
         assert result == ""
 
     def test_extract_invalid_index(self):
-        """TS-CR-005: _extract returns empty on bad list index."""
-        from app.ai.providers.custom_rest import CustomRESTProvider
+        """TS-CP-007: _extract returns empty on bad list index."""
+        from app.ai.providers.custom import CustomProvider
         data = {"choices": []}
-        result = CustomRESTProvider._extract(data, "choices.0.message.content")
+        result = CustomProvider._extract(data, "choices.0.message.content")
         assert result == ""
 
     def test_extract_non_dict_non_list(self):
-        """TS-CR-006: _extract returns empty on scalar value."""
-        from app.ai.providers.custom_rest import CustomRESTProvider
+        """TS-CP-008: _extract returns empty on scalar value."""
+        from app.ai.providers.custom import CustomProvider
         data = {"choices": "not_a_list"}
-        result = CustomRESTProvider._extract(data, "choices.0")
+        result = CustomProvider._extract(data, "choices.0")
         assert result == ""
 
     def test_extract_simple_key(self):
-        """TS-CR-007: _extract works with single-level key."""
-        from app.ai.providers.custom_rest import CustomRESTProvider
+        """TS-CP-009: _extract works with single-level key."""
+        from app.ai.providers.custom import CustomProvider
         data = {"response": "ok"}
-        result = CustomRESTProvider._extract(data, "response")
+        result = CustomProvider._extract(data, "response")
         assert result == "ok"
+
+    def test_chat_request_format(self):
+        """TS-CP-010: Chat builds correct payload."""
+        from app.ai.providers.custom import CustomProvider
+        p = CustomProvider()
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "choices": [{"message": {"content": "test reply"}}],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5},
+        }
+        mock_response.raise_for_status = MagicMock()
+
+        async def run_test():
+            with patch("httpx.AsyncClient") as mock_client_cls:
+                mock_client = AsyncMock()
+                mock_client.post = AsyncMock(return_value=mock_response)
+                mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+                mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+                result = await p.chat(
+                    [{"role": "user", "content": "hello"}],
+                    model="test-model",
+                )
+                assert result["content"] == "test reply"
+                assert result["usage"]["prompt_tokens"] == 10
+
+        asyncio.get_event_loop().run_until_complete(run_test())
+
+    def test_health_check_success(self):
+        """TS-CP-011: Health check returns True on 200."""
+        from app.ai.providers.custom import CustomProvider
+        p = CustomProvider()
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+
+        async def run_test():
+            with patch("httpx.AsyncClient") as mock_client_cls:
+                mock_client = AsyncMock()
+                mock_client.get = AsyncMock(return_value=mock_response)
+                mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+                mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+                result = await p.health_check()
+                assert result is True
+
+        asyncio.get_event_loop().run_until_complete(run_test())
+
+    def test_health_check_fallback_to_options(self):
+        """TS-CP-012: Health check falls back to OPTIONS on chat endpoint."""
+        from app.ai.providers.custom import CustomProvider
+        p = CustomProvider()
+
+        async def run_test():
+            with patch("httpx.AsyncClient") as mock_client_cls:
+                mock_client = AsyncMock()
+                mock_client.get = AsyncMock(side_effect=Exception("connection refused"))
+                mock_response_opts = MagicMock()
+                mock_response_opts.status_code = 200
+                mock_client.options = AsyncMock(return_value=mock_response_opts)
+                mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+                mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+                result = await p.health_check()
+                assert result is True
+
+        asyncio.get_event_loop().run_until_complete(run_test())
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -306,73 +249,70 @@ class TestProviderRegistry:
         from app.ai.provider_registry import clear_cache
         clear_cache()
 
-    def test_get_ollama_provider(self):
-        """TS-PR-001: Get Ollama provider."""
-        from app.ai.provider_registry import get_provider
-        p = get_provider("ollama", model="test-model")
-        assert p.name() == "ollama"
-
     def test_get_deepseek_provider(self):
-        """TS-PR-002: Get DeepSeek provider."""
+        """TS-PR-001: Get DeepSeek provider."""
         from app.ai.provider_registry import get_provider
         p = get_provider("deepseek", model="deepseek-coder", api_key="key")
         assert p.name() == "deepseek"
 
-    def test_get_qwen_provider(self):
-        """TS-PR-003: Get Qwen provider."""
+    def test_get_custom_provider(self):
+        """TS-PR-002: Get Custom provider."""
         from app.ai.provider_registry import get_provider
-        p = get_provider("qwen", model="qwen-plus", api_key="key")
-        assert p.name() == "qwen"
-
-    def test_get_openai_compat_provider(self):
-        """TS-PR-004: Get OpenAI-compatible provider."""
-        from app.ai.provider_registry import get_provider
-        p = get_provider("openai_compat", model="default")
-        assert p.name() == "openai_compat"
-
-    def test_get_custom_rest_provider(self):
-        """TS-PR-005: Get Custom REST provider."""
-        from app.ai.provider_registry import get_provider
-        p = get_provider("custom_rest", model="distill")
-        assert p.name() == "custom_rest"
+        p = get_provider("custom", model="default")
+        assert p.name() == "custom"
 
     def test_unknown_provider_raises(self):
-        """TS-PR-006: Unknown provider name raises ValueError."""
+        """TS-PR-003: Unknown provider name raises ValueError."""
         from app.ai.provider_registry import get_provider
         with pytest.raises(ValueError, match="unknown provider"):
             get_provider("nonexistent_provider")
 
     def test_provider_caching(self):
-        """TS-PR-007: Same (provider, model) returns cached instance."""
+        """TS-PR-004: Same (provider, model) returns cached instance."""
         from app.ai.provider_registry import get_provider
-        p1 = get_provider("ollama", model="m1")
-        p2 = get_provider("ollama", model="m1")
+        p1 = get_provider("deepseek", model="m1")
+        p2 = get_provider("deepseek", model="m1")
         assert p1 is p2
 
     def test_different_models_different_instances(self):
-        """TS-PR-008: Different models create different instances."""
+        """TS-PR-005: Different models create different instances."""
         from app.ai.provider_registry import get_provider
-        p1 = get_provider("ollama", model="model-a")
-        p2 = get_provider("ollama", model="model-b")
+        p1 = get_provider("deepseek", model="model-a")
+        p2 = get_provider("deepseek", model="model-b")
         assert p1 is not p2
 
     def test_clear_cache(self):
-        """TS-PR-009: clear_cache removes all cached providers."""
+        """TS-PR-006: clear_cache removes all cached providers."""
         from app.ai.provider_registry import get_provider, clear_cache, _cache
-        get_provider("ollama", model="test")
+        get_provider("deepseek", model="test")
         assert len(_cache) > 0
         clear_cache()
         assert len(_cache) == 0
 
     def test_supported_providers_set(self):
-        """TS-PR-010: SUPPORTED_PROVIDERS contains all expected names."""
+        """TS-PR-007: SUPPORTED_PROVIDERS contains only deepseek and custom."""
         from app.ai.provider_registry import SUPPORTED_PROVIDERS
-        assert "ollama" in SUPPORTED_PROVIDERS
         assert "deepseek" in SUPPORTED_PROVIDERS
-        assert "qwen" in SUPPORTED_PROVIDERS
-        assert "openai_compat" in SUPPORTED_PROVIDERS
-        assert "custom_rest" in SUPPORTED_PROVIDERS
-        assert len(SUPPORTED_PROVIDERS) == 5
+        assert "custom" in SUPPORTED_PROVIDERS
+        assert len(SUPPORTED_PROVIDERS) == 2
+
+    def test_override_base_url_bypasses_cache(self):
+        """TS-PR-008: Providing base_url bypasses the cache."""
+        from app.ai.provider_registry import get_provider, _cache, clear_cache
+        clear_cache()
+        p1 = get_provider("custom", model="default")
+        p2 = get_provider("custom", model="default", base_url="http://override:8000")
+        assert len(_cache) == 1  # Only p1 cached, p2 built uncached
+        assert p1 is not p2
+
+    def test_override_api_key_bypasses_cache(self):
+        """TS-PR-009: Providing api_key bypasses the cache."""
+        from app.ai.provider_registry import get_provider, _cache, clear_cache
+        clear_cache()
+        p1 = get_provider("deepseek", model="default")
+        p2 = get_provider("deepseek", model="default", api_key="new-key")
+        assert len(_cache) == 1
+        assert p1 is not p2
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -737,7 +677,7 @@ class TestAIEnrichment:
             "coverage_map",  # No template for coverage_map
             [{"finding_id": "F1"}],
             {},
-            {"provider": "ollama", "model": "test"},
+            {"provider": "deepseek", "model": "test"},
         )
         assert result["success"] is False
         assert "暂无" in result["ai_summary"]
@@ -764,7 +704,7 @@ class TestAIEnrichment:
             "branch_path",
             [{"finding_id": "F1", "symbol_name": "foo", "risk_score": 0.8}],
             {"foo": "void foo() {}"},
-            {"provider": "ollama", "model": "test"},
+            {"provider": "deepseek", "model": "test"},
         )
         assert result["success"] is True
         assert len(result["test_suggestions"]) >= 1
@@ -783,7 +723,7 @@ class TestAIEnrichment:
             "branch_path",
             [{"finding_id": "F1", "symbol_name": "foo", "risk_score": 0.8}],
             {},
-            {"provider": "ollama", "model": "test"},
+            {"provider": "deepseek", "model": "test"},
         )
         assert result["success"] is False
         assert "不可用" in result["ai_summary"]
@@ -810,7 +750,7 @@ class TestAIEnrichment:
             "branch_path",
             [{"finding_id": "F1", "symbol_name": "foo"}],
             {},
-            {"provider": "ollama", "model": "test"},
+            {"provider": "deepseek", "model": "test"},
             upstream_results=upstream,
         )
         assert result["success"] is True
@@ -844,7 +784,7 @@ class TestAIEnrichment:
         result = synthesize_cross_module(
             all_results,
             {"foo": "void foo() {}"},
-            {"provider": "ollama", "model": "test"},
+            {"provider": "deepseek", "model": "test"},
         )
         assert result["success"] is True
         assert len(result["test_suggestions"]) >= 1
@@ -884,7 +824,7 @@ class TestAIEnrichment:
         result = synthesize_cross_module(
             {"branch_path": {"findings": [], "risk_score": 0}},
             {},
-            {"provider": "ollama", "model": "nonexistent"},
+            {"provider": "deepseek", "model": "nonexistent"},
         )
         assert result["success"] is False
         assert "失败" in result["ai_summary"]
@@ -906,7 +846,7 @@ class TestAIEnrichment:
                 "branch_path",
                 [{"finding_id": "F1", "symbol_name": "foo"}],
                 {},
-                {"provider": "ollama", "model": "test"},
+                {"provider": "deepseek", "model": "test"},
             )
             assert result["success"] is False
             assert "渲染失败" in result["ai_summary"]
@@ -931,7 +871,7 @@ class TestCallModelSync:
         mock_async.side_effect = fake_async
 
         from app.services.ai_enrichment import _call_model_sync
-        result = _call_model_sync("ollama", "test", [{"role": "user", "content": "hi"}])
+        result = _call_model_sync("deepseek", "test", [{"role": "user", "content": "hi"}])
         assert result["success"] is True
         assert result["content"] == "reply"
 
@@ -940,7 +880,7 @@ class TestCallModelSync:
         from app.services.ai_enrichment import _call_model_sync
         with patch("app.services.ai_enrichment._call_model_async",
                     side_effect=RuntimeError("test error")):
-            result = _call_model_sync("ollama", "test", [])
+            result = _call_model_sync("deepseek", "test", [])
             assert result["success"] is False
             assert "test error" in result.get("error", "")
 
@@ -1018,7 +958,7 @@ class TestEdgeCases:
             "branch_path",
             [],  # No findings
             {},
-            {"provider": "ollama", "model": "test"},
+            {"provider": "deepseek", "model": "test"},
         )
         # With empty findings the AI is still called (function proceeds with empty context)
         mock_call.assert_called_once()
@@ -1041,7 +981,7 @@ class TestEdgeCases:
             "branch_path",
             findings,
             {},
-            {"provider": "ollama", "model": "test"},
+            {"provider": "deepseek", "model": "test"},
         )
         # Verify the call was made
         mock_call.assert_called_once()
@@ -1066,7 +1006,7 @@ class TestEdgeCases:
             "branch_path",
             [{"finding_id": "F1", "symbol_name": "func_0"}],
             snippets,
-            {"provider": "ollama", "model": "test"},
+            {"provider": "deepseek", "model": "test"},
         )
         mock_call.assert_called_once()
 
@@ -1074,13 +1014,13 @@ class TestEdgeCases:
         """TS-EC-006: Provider can override base_url via get_provider."""
         from app.ai.provider_registry import get_provider, clear_cache
         clear_cache()
-        p = get_provider("ollama", model="test", base_url="http://custom:11434")
-        assert p._base_url == "http://custom:11434"
+        p = get_provider("custom", model="test", base_url="http://custom:8000")
+        assert p._base_url == "http://custom:8000"
 
-    def test_custom_rest_provider_custom_response_key(self):
-        """TS-EC-007: CustomREST extracts from custom response key path."""
-        from app.ai.providers.custom_rest import CustomRESTProvider
-        p = CustomRESTProvider(response_content_key="result.text")
+    def test_custom_provider_custom_response_key(self):
+        """TS-EC-007: CustomProvider extracts from custom response key path."""
+        from app.ai.providers.custom import CustomProvider
+        p = CustomProvider(response_content_key="result.text")
         data = {"result": {"text": "custom response"}}
         content = p._extract(data, "result.text")
         assert content == "custom response"
