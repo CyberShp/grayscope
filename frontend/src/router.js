@@ -37,6 +37,12 @@ const routes = [
     meta: { title: '新建分析' },
   },
   {
+    path: '/code-analysis',
+    name: 'CodeAnalysis',
+    component: () => import('./views/CodeAnalysis.vue'),
+    meta: { title: '代码分析流水线' },
+  },
+  {
     path: '/postmortem',
     name: 'Postmortem',
     component: () => import('./views/Postmortem.vue'),

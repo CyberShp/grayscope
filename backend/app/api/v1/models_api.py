@@ -16,39 +16,21 @@ router = APIRouter()
 
 # Provider metadata for the frontend
 _PROVIDER_META = {
-    "ollama": {
-        "display_name": "Ollama (本地)",
-        "provider_type": "local",
-        "default_models": ["qwen2.5-coder", "codellama", "deepseek-coder-v2", "starcoder2"],
-    },
     "deepseek": {
         "display_name": "DeepSeek",
         "provider_type": "cloud",
         "default_models": ["deepseek-coder", "deepseek-chat"],
     },
-    "qwen": {
-        "display_name": "通义千问 Qwen",
-        "provider_type": "cloud",
-        "default_models": ["qwen-plus", "qwen-turbo", "qwen-max", "qwen2.5-coder-32b"],
-    },
-    "openai_compat": {
-        "display_name": "OpenAI 兼容",
+    "custom": {
+        "display_name": "自定义接口",
         "provider_type": "custom",
         "default_models": ["default"],
-    },
-    "custom_rest": {
-        "display_name": "自定义 REST",
-        "provider_type": "custom",
-        "default_models": ["distill-v1"],
     },
 }
 
 _BASE_URLS = {
-    "ollama": lambda: settings.ollama_base_url,
     "deepseek": lambda: settings.deepseek_base_url,
-    "qwen": lambda: settings.qwen_base_url,
-    "openai_compat": lambda: settings.openai_compat_base_url,
-    "custom_rest": lambda: settings.custom_rest_base_url,
+    "custom": lambda: settings.custom_base_url,
 }
 
 
@@ -76,6 +58,28 @@ async def list_models() -> dict:
     return ok({"providers": providers})
 
 
+def _safe_setattr(obj: object, attr: str, value: object) -> bool:
+    """Safely set attribute on a Pydantic Settings object.
+    
+    Pydantic V2 Settings may be frozen; handle by accessing __dict__ directly
+    or using object.__setattr__.
+    """
+    try:
+        setattr(obj, attr, value)
+        return True
+    except (TypeError, ValueError):
+        try:
+            object.__setattr__(obj, attr, value)
+            return True
+        except Exception:
+            pass
+    try:
+        obj.__dict__[attr] = value
+        return True
+    except Exception:
+        return False
+
+
 @router.post("/models/config")
 def update_model_config(body: dict) -> dict:
     """更新 AI 模型配置（API key、base_url 等）。
@@ -93,16 +97,16 @@ def update_model_config(body: dict) -> dict:
     if api_key is not None:
         attr = f"{provider}_api_key"
         if hasattr(settings, attr):
-            setattr(settings, attr, api_key)
-            changed.append(attr)
+            if _safe_setattr(settings, attr, api_key):
+                changed.append(attr)
         # 清除缓存以使新配置生效
         from app.ai.provider_registry import clear_cache
         clear_cache()
     if base_url is not None:
         attr = f"{provider}_base_url"
         if hasattr(settings, attr):
-            setattr(settings, attr, base_url)
-            changed.append(attr)
+            if _safe_setattr(settings, attr, base_url):
+                changed.append(attr)
         from app.ai.provider_registry import clear_cache
         clear_cache()
 

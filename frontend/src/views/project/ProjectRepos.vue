@@ -102,9 +102,9 @@
           <el-input v-model="newRepo.auth_secret_ref" placeholder="例如: GIT_TOKEN_REPO_1" maxlength="256" />
           <div class="gs-form-hint">在服务器上设置该环境变量为 Git Token，切勿填写 token 本身</div>
         </el-form-item>
-        <el-form-item v-if="newRepo.auth_type === 'ssh_key'" label="私钥路径环境变量名">
-          <el-input v-model="newRepo.auth_secret_ref" placeholder="例如: GIT_SSH_KEY_PATH" maxlength="256" />
-          <div class="gs-form-hint">在服务器上设置该环境变量为 SSH 私钥文件路径</div>
+        <el-form-item v-if="newRepo.auth_type === 'ssh_key'" label="SSH 私钥路径">
+          <el-input v-model="newRepo.auth_secret_ref" placeholder="例如: ~/.ssh/id_rsa 或 /root/.ssh/id_rsa" maxlength="256" />
+          <div class="gs-form-hint">直接填写私钥文件路径（支持 ~ 展开），或填写环境变量名</div>
         </el-form-item>
       </el-form>
       <template #footer>
@@ -160,8 +160,9 @@
         <el-form-item v-if="editRepo.auth_type === 'https_token'" label="Token 环境变量名">
           <el-input v-model="editRepo.auth_secret_ref" placeholder="例如: GIT_TOKEN_REPO_1" maxlength="256" />
         </el-form-item>
-        <el-form-item v-if="editRepo.auth_type === 'ssh_key'" label="私钥路径环境变量名">
-          <el-input v-model="editRepo.auth_secret_ref" placeholder="例如: GIT_SSH_KEY_PATH" maxlength="256" />
+        <el-form-item v-if="editRepo.auth_type === 'ssh_key'" label="SSH 私钥路径">
+          <el-input v-model="editRepo.auth_secret_ref" placeholder="例如: ~/.ssh/id_rsa 或 /root/.ssh/id_rsa" maxlength="256" />
+          <div class="gs-form-hint">直接填写私钥文件路径（支持 ~ 展开），或填写环境变量名</div>
         </el-form-item>
       </el-form>
       <template #footer>

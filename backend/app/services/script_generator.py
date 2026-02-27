@@ -239,12 +239,246 @@ def generate_gtest_script(test_case: dict[str, Any]) -> str:
     return "\n".join(lines).strip()
 
 
-def generate_script(test_case: dict[str, Any], format: str = "cpp") -> str:
-    """统一入口：按 format 生成 Python 或 GTest C++ 脚本。"""
+def generate_cppunit_script(test_case: dict[str, Any]) -> str:
+    """根据用例生成 CppUnit C++ 测试代码（按 risk_type 使用成熟 DT 模板）。
+    
+    生成标准 CppUnit 格式:
+    - CPPUNIT_TEST_SUITE / CPPUNIT_TEST / CPPUNIT_TEST_SUITE_END
+    - CPPUNIT_ASSERT_EQUAL, CPPUNIT_ASSERT, CPPUNIT_ASSERT_THROW
+    - TestFixture 子类 with setUp() / tearDown()
+    - CPPUNIT_TEST_SUITE_REGISTRATION
+    """
+    risk_type = test_case.get("category") or test_case.get("risk_type") or ""
+    symbol = test_case.get("target_function") or test_case.get("symbol_name") or "target_func"
+    target_file = test_case.get("target_file") or test_case.get("file_path") or ""
+    evidence = test_case.get("evidence") or {}
+    finding_id = test_case.get("source_finding_id") or test_case.get("finding_id") or ""
+    title = test_case.get("title") or ""
+    steps = test_case.get("test_steps") or []
+    if isinstance(test_case.get("steps_json"), str):
+        try:
+            steps = json.loads(test_case["steps_json"]) or []
+        except (TypeError, json.JSONDecodeError):
+            pass
+    expected = test_case.get("expected_result") or test_case.get("expected") or "通过"
+    if isinstance(expected, list):
+        expected = " ".join(str(x) for x in expected)
+
+    header = _header_path_from_file(target_file)
+    suite = _safe_cpp_id(symbol) + "Test"
+    
+    lines = [
+        "// CppUnit DT — GrayScope 灰盒生成",
+        _DT_HEADER_COMMENT.strip(),
+        f"// risk_type: {risk_type}",
+        f"// 目标: {symbol}",
+        f"// finding_id: {finding_id}",
+        "",
+        "#include <cppunit/TestFixture.h>",
+        "#include <cppunit/extensions/HelperMacros.h>",
+        "#include <cerrno>",
+        "#include <cstdint>",
+        "extern \"C\" {",
+        f"#include \"{header}\"",
+        "}",
+        "",
+    ]
+
+    if risk_type == "boundary_miss":
+        candidates = _boundary_candidates(evidence)
+        constraint = _constraint_expr(evidence)
+        if not candidates:
+            candidates = [0, -1, 1]
+        
+        lines.append(f"// 边界约束: {constraint or '(见 evidence)'}")
+        lines.append(f"class {suite} : public CppUnit::TestFixture {{")
+        lines.append(f"    CPPUNIT_TEST_SUITE({suite});")
+        
+        test_methods = []
+        n = len(candidates)
+        for i, val in enumerate(candidates[:10]):
+            safe_val = val if isinstance(val, (int, float)) else 0
+            if n >= 3 and i == 0:
+                bva_label = "BVA_min"
+            elif n >= 3 and i == 1:
+                bva_label = "BVA_minPlus1"
+            elif n >= 3 and i == n - 2:
+                bva_label = "BVA_maxMinus1"
+            elif n >= 3 and i == n - 1:
+                bva_label = "BVA_max"
+            elif n >= 3:
+                bva_label = "BVA_nominal"
+            else:
+                bva_label = f"Boundary_{i}"
+            method_name = f"test{_safe_cpp_id(bva_label)}_{abs(int(safe_val)) if isinstance(safe_val, (int, float)) else 0}"
+            test_methods.append((method_name, safe_val, constraint))
+            lines.append(f"    CPPUNIT_TEST({method_name});")
+        
+        lines.append(f"    CPPUNIT_TEST_SUITE_END();")
+        lines.append("")
+        lines.append("public:")
+        lines.append("    void setUp() override {}")
+        lines.append("    void tearDown() override {}")
+        lines.append("")
+        
+        for method_name, val, constraint in test_methods:
+            lines.append(f"    void {method_name}() {{")
+            lines.append(f"        // 边界值: {val} (约束: {constraint!r})")
+            lines.append(f"        int result = 0;  // 替换为: {symbol}({val}) 或实际签名")
+            lines.append(f"        CPPUNIT_ASSERT(result >= 0);  // 或 CPPUNIT_ASSERT_EQUAL(预期, result);")
+            lines.append("    }")
+            lines.append("")
+        
+        lines.append("};")
+        lines.append(f"CPPUNIT_TEST_SUITE_REGISTRATION({suite});")
+        
+    elif risk_type == "missing_cleanup":
+        lines.append("// 成熟 DT: 错误路径上断言返回值与无泄漏")
+        lines.append("// 做法: malloc wrapper 第 N 次返回 NULL，或 LD_PRELOAD 注入")
+        lines.append("")
+        lines.append(f"class {suite} : public CppUnit::TestFixture {{")
+        lines.append(f"    CPPUNIT_TEST_SUITE({suite});")
+        lines.append(f"    CPPUNIT_TEST(testCleanupOnAllocFailure);")
+        lines.append(f"    CPPUNIT_TEST(testResourceReleaseOnError);")
+        lines.append(f"    CPPUNIT_TEST_SUITE_END();")
+        lines.append("")
+        lines.append("public:")
+        lines.append("    void setUp() override {}")
+        lines.append("    void tearDown() override {}")
+        lines.append("")
+        lines.append("    void testCleanupOnAllocFailure() {")
+        lines.append(f"        // 1. 设置 malloc 失败注入，使第 N 次分配失败")
+        lines.append(f"        // 2. 调用 {symbol}(...) 触发错误路径")
+        lines.append(f"        // 3. 断言: 返回值为 -ENOMEM（或项目错误码）")
+        lines.append(f"        int result = 0;  // 替换为: {symbol}(&ctx)")
+        lines.append(f"        CPPUNIT_ASSERT_EQUAL(-ENOMEM, result);")
+        lines.append("    }")
+        lines.append("")
+        lines.append("    void testResourceReleaseOnError() {")
+        lines.append(f"        // 断言: 所有已分配资源已释放（无泄漏）")
+        lines.append(f"        // 可使用 valgrind 或自定义 alloc tracker 验证")
+        lines.append(f"        CPPUNIT_ASSERT_MESSAGE(\"资源已正确释放\", true);")
+        lines.append("    }")
+        lines.append("};")
+        lines.append(f"CPPUNIT_TEST_SUITE_REGISTRATION({suite});")
+        
+    elif "race" in risk_type or "lock" in risk_type:
+        lines.append("#include <thread>")
+        lines.append("#include <atomic>")
+        lines.append("#include <mutex>")
+        lines.append("// 成熟 DT 并发: 双线程调用 + join + 对共享状态断言")
+        lines.append("")
+        lines.append(f"class {suite} : public CppUnit::TestFixture {{")
+        lines.append(f"    CPPUNIT_TEST_SUITE({suite});")
+        lines.append(f"    CPPUNIT_TEST(testConcurrencyStress);")
+        lines.append(f"    CPPUNIT_TEST(testNoDeadlock);")
+        lines.append(f"    CPPUNIT_TEST(testSharedStateConsistency);")
+        lines.append(f"    CPPUNIT_TEST_SUITE_END();")
+        lines.append("")
+        lines.append("public:")
+        lines.append("    void setUp() override {}")
+        lines.append("    void tearDown() override {}")
+        lines.append("")
+        lines.append("    void testConcurrencyStress() {")
+        lines.append("        std::atomic<int> done{0};")
+        lines.append(f"        auto worker = [&]() {{ /* 调用 {symbol} 或相关接口 */ done++; }};")
+        lines.append("        std::thread t1(worker), t2(worker);")
+        lines.append("        t1.join(); t2.join();")
+        lines.append("        CPPUNIT_ASSERT_EQUAL(2, done.load());  // 无异常终止则两次均完成")
+        lines.append("    }")
+        lines.append("")
+        lines.append("    void testNoDeadlock() {")
+        lines.append("        // 设置超时，验证不发生死锁")
+        lines.append("        std::atomic<bool> finished{false};")
+        lines.append(f"        std::thread t([&]() {{ /* 调用 {symbol} */ finished = true; }});")
+        lines.append("        t.join();")
+        lines.append("        CPPUNIT_ASSERT_MESSAGE(\"操作应在合理时间内完成\", finished.load());")
+        lines.append("    }")
+        lines.append("")
+        lines.append("    void testSharedStateConsistency() {")
+        lines.append("        // 验证共享状态在并发访问后保持一致")
+        lines.append(f"        // 替换为: 检查 {symbol} 相关的共享变量")
+        lines.append("        CPPUNIT_ASSERT(true);  // 替换为实际断言")
+        lines.append("    }")
+        lines.append("};")
+        lines.append(f"CPPUNIT_TEST_SUITE_REGISTRATION({suite});")
+        
+    elif "protocol" in risk_type or "message" in risk_type or "packet" in risk_type:
+        lines.append("// 协议/报文测试: 构造各种报文场景验证处理逻辑")
+        lines.append("")
+        lines.append(f"class {suite} : public CppUnit::TestFixture {{")
+        lines.append(f"    CPPUNIT_TEST_SUITE({suite});")
+        lines.append(f"    CPPUNIT_TEST(testValidMessage);")
+        lines.append(f"    CPPUNIT_TEST(testMalformedMessage);")
+        lines.append(f"    CPPUNIT_TEST(testBoundaryLengthMessage);")
+        lines.append(f"    CPPUNIT_TEST(testInvalidFieldValue);")
+        lines.append(f"    CPPUNIT_TEST_SUITE_END();")
+        lines.append("")
+        lines.append("public:")
+        lines.append("    void setUp() override {}")
+        lines.append("    void tearDown() override {}")
+        lines.append("")
+        lines.append("    void testValidMessage() {")
+        lines.append(f"        // 构造有效报文，验证 {symbol} 正常处理")
+        lines.append("        // uint8_t msg[] = {{...}};")
+        lines.append(f"        // int result = {symbol}(msg, sizeof(msg));")
+        lines.append("        CPPUNIT_ASSERT_MESSAGE(\"有效报文应处理成功\", true);")
+        lines.append("    }")
+        lines.append("")
+        lines.append("    void testMalformedMessage() {")
+        lines.append("        // 构造畸形报文（截断/字段缺失）")
+        lines.append(f"        // 预期: {symbol} 返回错误码，不崩溃")
+        lines.append("        CPPUNIT_ASSERT_MESSAGE(\"畸形报文应返回错误\", true);")
+        lines.append("    }")
+        lines.append("")
+        lines.append("    void testBoundaryLengthMessage() {")
+        lines.append("        // 报文长度为边界值（0, 1, max-1, max, max+1）")
+        lines.append("        CPPUNIT_ASSERT_MESSAGE(\"边界长度报文处理正确\", true);")
+        lines.append("    }")
+        lines.append("")
+        lines.append("    void testInvalidFieldValue() {")
+        lines.append("        // 字段值超出有效范围")
+        lines.append("        CPPUNIT_ASSERT_MESSAGE(\"无效字段值应被拒绝\", true);")
+        lines.append("    }")
+        lines.append("};")
+        lines.append(f"CPPUNIT_TEST_SUITE_REGISTRATION({suite});")
+        
+    else:
+        # 默认通用模板
+        lines.append(f"// 用例: {title}")
+        for i, step in enumerate(steps[:5], 1):
+            lines.append(f"// 步骤{i}: {step}")
+        lines.append(f"// 预期: {expected}")
+        lines.append("")
+        lines.append(f"class {suite} : public CppUnit::TestFixture {{")
+        lines.append(f"    CPPUNIT_TEST_SUITE({suite});")
+        lines.append(f"    CPPUNIT_TEST(testDefaultCase);")
+        lines.append(f"    CPPUNIT_TEST_SUITE_END();")
+        lines.append("")
+        lines.append("public:")
+        lines.append("    void setUp() override {}")
+        lines.append("    void tearDown() override {}")
+        lines.append("")
+        lines.append("    void testDefaultCase() {")
+        lines.append(f"        // 调用 {symbol}(...) 并按步骤执行")
+        lines.append("        int result = 0;  // 替换为实际调用")
+        lines.append("        CPPUNIT_ASSERT(result >= 0);  // 或 CPPUNIT_ASSERT_EQUAL(预期, result);")
+        lines.append("    }")
+        lines.append("};")
+        lines.append(f"CPPUNIT_TEST_SUITE_REGISTRATION({suite});")
+
+    return "\n".join(lines).strip()
+
+
+def generate_script(test_case: dict[str, Any], format: str = "cppunit") -> str:
+    """统一入口：按 format 生成 Python 或 CppUnit C++ 脚本。默认使用 CppUnit。"""
     if format and format.lower() in ("python", "py"):
         return generate_python_script(test_case)
-    out = generate_gtest_script(test_case)
-    return ensure_unity_test_groups(out)
+    if format and format.lower() in ("gtest", "googletest"):
+        out = generate_gtest_script(test_case)
+        return ensure_unity_test_groups(out)
+    # 默认使用 CppUnit
+    return generate_cppunit_script(test_case)
 
 
 def ensure_unity_test_groups(script: str) -> str:

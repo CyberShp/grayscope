@@ -88,33 +88,36 @@
             <span class="gs-card-title">API Key 配置</span>
           </div>
           <p style="font-size: 13px; color: var(--gs-text-secondary); margin-bottom: 16px;">
-            为云端 AI 提供商配置 API Key（本地 Ollama 无需配置）
+            为 AI 提供商配置 API Key 和端点地址
           </p>
           <el-form label-width="140px" style="max-width: 600px;">
-            <el-form-item label="DeepSeek API Key">
+            <el-divider content-position="left">DeepSeek</el-divider>
+            <el-form-item label="API Key">
               <el-input v-model="apiKeys.deepseek" placeholder="sk-..." type="password" show-password clearable>
                 <template #append>
                   <el-button @click="saveApiKey('deepseek')" :loading="savingKey === 'deepseek'">保存</el-button>
                 </template>
               </el-input>
             </el-form-item>
-            <el-form-item label="通义千问 API Key">
-              <el-input v-model="apiKeys.qwen" placeholder="sk-..." type="password" show-password clearable>
+            <el-form-item label="API 端点">
+              <el-input v-model="baseUrls.deepseek" placeholder="https://api.deepseek.com" clearable />
+              <div style="font-size: 12px; color: var(--gs-text-muted); margin-top: 4px;">可填写内网镜像地址，留空使用官方 API</div>
+            </el-form-item>
+
+            <el-divider content-position="left">自定义接口（OpenAI 兼容）</el-divider>
+            <el-form-item label="API Key">
+              <el-input v-model="apiKeys.custom" placeholder="sk-... 或留空" type="password" show-password clearable>
                 <template #append>
-                  <el-button @click="saveApiKey('qwen')" :loading="savingKey === 'qwen'">保存</el-button>
+                  <el-button @click="saveApiKey('custom')" :loading="savingKey === 'custom'">保存</el-button>
                 </template>
               </el-input>
             </el-form-item>
-            <el-form-item label="OpenAI 兼容 Key">
-              <el-input v-model="apiKeys.openai_compat" placeholder="sk-..." type="password" show-password clearable>
-                <template #append>
-                  <el-button @click="saveApiKey('openai_compat')" :loading="savingKey === 'openai_compat'">保存</el-button>
-                </template>
-              </el-input>
+            <el-form-item label="API 端点">
+              <el-input v-model="baseUrls.custom" placeholder="内网 API 地址，如 http://192.168.1.100:8000" clearable />
+              <div style="font-size: 12px; color: var(--gs-text-muted); margin-top: 4px;">支持 vLLM、TGI、LMStudio 等 OpenAI 兼容接口</div>
             </el-form-item>
-            <el-form-item label="OpenAI 兼容 端点">
-              <el-input v-model="baseUrls.openai_compat" placeholder="内网 API 地址，如 https://api.internal/v1" clearable />
-              <div style="font-size: 12px; color: var(--gs-text-muted); margin-top: 4px;">设置后测试连接会携带上方 Key 请求该端点</div>
+            <el-form-item label="默认模型">
+              <el-input v-model="customModel" placeholder="模型名称，如 qwen2.5-coder" clearable />
             </el-form-item>
           </el-form>
         </div>
@@ -185,8 +188,8 @@ const activeTab = ref('models')
 const models = ref([])
 const testingAll = ref(false)
 const showAddProvider = ref(false)
-const defaultProvider = ref('ollama')
-const defaultModel = ref('qwen2.5-coder')
+const defaultProvider = ref('deepseek')
+const defaultModel = ref('deepseek-coder')
 
 const currentProviderModels = computed(() => {
   const p = models.value.find(m => m.provider_id === defaultProvider.value)
@@ -267,8 +270,9 @@ function saveDefaultModel() {
   ElMessage.success(`默认 AI 配置已保存: ${defaultProvider.value} / ${defaultModel.value}`)
 }
 
-const apiKeys = ref({ deepseek: '', qwen: '', openai_compat: '' })
-const baseUrls = ref({ deepseek: '', qwen: '', openai_compat: '' })
+const apiKeys = ref({ deepseek: '', custom: '' })
+const baseUrls = ref({ deepseek: '', custom: '' })
+const customModel = ref('default')
 const savingKey = ref('')
 
 async function saveApiKey(provider) {

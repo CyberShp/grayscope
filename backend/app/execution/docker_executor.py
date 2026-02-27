@@ -1,4 +1,4 @@
-"""Docker + QEMU ARM 执行器：在容器内交叉编译并运行 GTest，收集 JUnit XML 与 gcov 覆盖率。"""
+"""Docker + QEMU ARM 执行器：在容器内交叉编译并运行 CppUnit，收集 JUnit XML 与 gcov 覆盖率。"""
 
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ def _is_alpine_image(base_image: str) -> bool:
 
 
 def _dockerfile_content(base_image: str = "arm64v8/ubuntu:22.04") -> str:
-    """生成 Dockerfile：基于指定镜像，安装 gtest/gmock。Debian/Ubuntu 用 apt-get，Alpine 用 apk。"""
+    """生成 Dockerfile：基于指定镜像，安装 CppUnit。Debian/Ubuntu 用 apt-get，Alpine 用 apk。"""
     if _is_alpine_image(base_image):
         return r"""
 FROM """ + base_image + r"""
@@ -39,8 +39,7 @@ RUN apk add --no-cache \
     g++ \
     make \
     cmake \
-    gtest-dev \
-    gmock \
+    cppunit-dev \
     gcovr \
     git
 WORKDIR /workspace
@@ -58,8 +57,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     g++ \
     cmake \
     git \
-    libgtest-dev \
-    libgmock-dev \
+    libcppunit-dev \
     gcovr \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /workspace

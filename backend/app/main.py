@@ -11,6 +11,7 @@ from fastapi.responses import JSONResponse, RedirectResponse
 
 from app.api.v1.aggregation import router as aggregation_router
 from app.api.v1.analysis import router as analysis_router
+from app.api.v1.code_analysis_api import router as code_analysis_router
 from app.api.v1.health import router as health_router
 from app.api.v1.models_api import router as models_router
 from app.api.v1.postmortem import router as postmortem_router
@@ -160,6 +161,7 @@ app.include_router(health_router, prefix="/api/v1", tags=["健康检查"])
 app.include_router(projects_router, prefix="/api/v1", tags=["项目管理"])
 app.include_router(repos_router, prefix="/api/v1", tags=["仓库管理"])
 app.include_router(analysis_router, prefix="/api/v1", tags=["分析任务"])
+app.include_router(code_analysis_router, prefix="/api/v1", tags=["代码分析流水线"])
 app.include_router(postmortem_router, prefix="/api/v1", tags=["事后分析", "知识库"])
 app.include_router(models_router, prefix="/api/v1", tags=["AI模型"])
 app.include_router(aggregation_router, prefix="/api/v1", tags=["聚合数据"])

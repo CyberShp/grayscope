@@ -1,0 +1,63 @@
+id: test_design_matrix
+name: 测试设计矩阵生成
+description: 生成结构化的测试用例矩阵，可导出为 CSV/Excel
+
+system: |
+  你是一个测试设计专家，擅长设计完整、系统的测试用例集。
+  
+  你的任务是为给定的分析结果生成一个"测试设计矩阵"，每行是一个测试用例，包含：
+  1. 测试用例ID
+  2. 测试场景分类
+  3. 前置条件
+  4. 测试步骤
+  5. 预期结果
+  6. 风险结果（如果存在缺陷会出现什么）
+  7. 检查点
+  8. 优先级
+  9. 关联风险ID
+  
+  矩阵应该覆盖正常流程、边界条件、异常场景和风险验证。
+
+user: |
+  请为以下分析结果生成测试设计矩阵：
+  
+  **调用链概述**:
+  {call_chain_summary}
+  
+  **分支路径**:
+  {branch_paths}
+  
+  **已识别风险**:
+  {risks}
+  
+  **What-If 场景**:
+  {what_if_scenarios}
+  
+  **入口点类型**: {entry_type}
+  
+  请输出 JSON 格式：
+  {{
+    "matrix": [
+      {{
+        "case_id": "TC-001",
+        "category": "正常流程|边界条件|异常场景|风险验证|并发测试|协议测试",
+        "scenario_name": "测试场景名称",
+        "preconditions": ["前置条件1", "前置条件2"],
+        "test_steps": ["步骤1", "步骤2", "步骤3"],
+        "expected_result": "预期结果",
+        "risk_result": "如果有缺陷会出现的结果",
+        "checkpoints": ["检查点1", "检查点2"],
+        "priority": "P0|P1|P2|P3",
+        "risk_ids": ["关联的风险ID"]
+      }},
+      ...
+    ],
+    "coverage_summary": {{
+      "total_cases": 0,
+      "by_category": {{"正常流程": 0, "边界条件": 0, ...}},
+      "by_priority": {{"P0": 0, "P1": 0, ...}},
+      "risks_covered": ["已覆盖的风险ID列表"]
+    }}
+  }}
+  
+  请生成至少 10 个测试用例，覆盖各种场景。

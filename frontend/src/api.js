@@ -156,4 +156,26 @@ export default {
   stopEnvContainer: (id) => request('POST', `/execution-env/containers/${id}/stop`, {}),
   removeEnvContainer: (id, force = false) => request('DELETE', `/execution-env/containers/${id}?force=${force}`),
   getEnvContainer: (id) => request('GET', `/execution-env/containers/${id}`),
+
+  // ── 代码分析流水线（新） ──────────────
+  startCodeAnalysis: (body) => request('POST', '/code-analysis/start', body),
+  getCodeAnalysisStatus: (analysisId) => request('GET', `/code-analysis/${analysisId}/status`),
+  getCodeAnalysisResults: (analysisId) => request('GET', `/code-analysis/${analysisId}/results`),
+  getCodeAnalysisCallGraph: (analysisId) => request('GET', `/code-analysis/${analysisId}/call-graph`),
+  getCodeAnalysisRisks: (analysisId, params = {}) => {
+    const qs = new URLSearchParams(params).toString()
+    return request('GET', `/code-analysis/${analysisId}/risks${qs ? '?' + qs : ''}`)
+  },
+  getCodeAnalysisNarratives: (analysisId) => request('GET', `/code-analysis/${analysisId}/narratives`),
+  getCodeAnalysisFunctionDict: (analysisId) => request('GET', `/code-analysis/${analysisId}/function-dictionary`),
+  getCodeAnalysisRiskCards: (analysisId) => request('GET', `/code-analysis/${analysisId}/risk-cards`),
+  getCodeAnalysisWhatIf: (analysisId) => request('GET', `/code-analysis/${analysisId}/what-if`),
+  getCodeAnalysisTestMatrix: (analysisId) => request('GET', `/code-analysis/${analysisId}/test-matrix`),
+  getCodeAnalysisProtocolSM: (analysisId) => request('GET', `/code-analysis/${analysisId}/protocol-state-machine`),
+  exportCodeAnalysis: (analysisId, fmt = 'json') => `${BASE}/code-analysis/${analysisId}/export?fmt=${fmt}`,
+  listCodeAnalyses: (params = {}) => {
+    const qs = new URLSearchParams(params).toString()
+    return request('GET', `/code-analysis${qs ? '?' + qs : ''}`)
+  },
+  deleteCodeAnalysis: (analysisId) => request('DELETE', `/code-analysis/${analysisId}`),
 }

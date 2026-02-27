@@ -1,0 +1,9 @@
+{
+  "target": "local_docker",
+  "docker_image": "",
+  "remote_host": "",
+  "remote_port": 22,
+  "remote_user": "",
+  "remote_key_path": "",
+  "remote_workdir": "/tmp/grayscope_run"
+}

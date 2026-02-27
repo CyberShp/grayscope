@@ -19,10 +19,25 @@ logger = logging.getLogger(__name__)
 
 
 def _resolve_secret(auth_secret_ref: str | None) -> str | None:
-    """Resolve secret from env var name (auth_secret_ref). Returns None if unset or empty."""
+    """Resolve secret from env var name or direct file path.
+    
+    If auth_secret_ref looks like a file path (starts with /, ~, or contains path separators),
+    it's treated as a direct file path. Otherwise, it's treated as an environment variable name.
+    Returns None if unset or empty.
+    """
     if not auth_secret_ref:
         return None
-    return os.environ.get(auth_secret_ref) or None
+    
+    ref = auth_secret_ref.strip()
+    
+    # Detect if it's a direct file path
+    if ref.startswith("/") or ref.startswith("~") or ref.startswith("./") or os.sep in ref:
+        # Expand ~ to user home directory
+        expanded = os.path.expanduser(ref)
+        return expanded if expanded else None
+    
+    # Otherwise treat as environment variable name
+    return os.environ.get(ref) or None
 
 
 def _build_clone_url_with_token(git_url: str, token: str) -> str:

@@ -48,6 +48,7 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
+import { Setting } from '@element-plus/icons-vue'
 import { useAppStore } from './stores/app.js'
 
 const route = useRoute()
@@ -56,12 +57,12 @@ const systemHealthy = computed(() => appStore.systemHealthy)
 
 const navItems = [
   { path: '/projects', label: '项目', match: ['/projects'] },
+  { path: '/code-analysis', label: '代码分析', match: ['/code-analysis'] },
   { path: '/test-design', label: '测试设计', match: ['/test-design'] },
   { path: '/test-execution', label: '测试执行', match: ['/test-execution'] },
   { path: '/execution-env', label: '执行环境', match: ['/execution-env'] },
   { path: '/issues', label: '风险发现', match: ['/issues'] },
   { path: '/tasks', label: '任务中心', match: ['/tasks', '/task'] },
-  { path: '/analyze', label: '新建分析', match: ['/analyze'] },
   { path: '/postmortem', label: '事后分析', match: ['/postmortem'] },
   { path: '/knowledge', label: '知识库', match: ['/knowledge'] },
 ]

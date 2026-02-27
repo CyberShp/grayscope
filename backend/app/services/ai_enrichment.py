@@ -33,9 +33,21 @@ async def _call_model_async(
     provider_name: str,
     model: str,
     messages: list[dict[str, str]],
+    *,
+    api_key: str | None = None,
+    base_url: str | None = None,
 ) -> dict:
-    """异步调用 AI 模型并返回解析后的响应。"""
-    provider = get_provider(provider_name, model=model)
+    """异步调用 AI 模型并返回解析后的响应。
+    
+    当显式传入 api_key/base_url 时，会使用这些值而非 settings 中的默认值。
+    """
+    provider_kwargs: dict[str, Any] = {"model": model}
+    if api_key is not None:
+        provider_kwargs["api_key"] = api_key
+    if base_url is not None:
+        provider_kwargs["base_url"] = base_url.rstrip("/")
+    
+    provider = get_provider(provider_name, **provider_kwargs)
     try:
         result = await provider.chat(messages, model=model)
         return {
@@ -57,13 +69,19 @@ def _call_model_sync(
     provider_name: str,
     model: str,
     messages: list[dict[str, str]],
+    *,
+    api_key: str | None = None,
+    base_url: str | None = None,
 ) -> dict:
     """同步调用 AI 模型。"""
     try:
         loop = asyncio.new_event_loop()
         try:
             return loop.run_until_complete(
-                _call_model_async(provider_name, model, messages)
+                _call_model_async(
+                    provider_name, model, messages,
+                    api_key=api_key, base_url=base_url,
+                )
             )
         finally:
             loop.close()
@@ -181,6 +199,8 @@ def enrich_module(
 
     provider_name = ai_config.get("provider", "ollama")
     model = ai_config.get("model", "qwen2.5-coder")
+    api_key = ai_config.get("api_key")
+    base_url = ai_config.get("base_url")
 
     # 从最高风险的发现中构建上下文
     top_findings = findings[:10]
@@ -240,7 +260,10 @@ def enrich_module(
 
     # 调用 AI 模型
     logger.info("正在调用 AI 模型: %s/%s (消息数=%d)", provider_name, model, len(messages))
-    ai_result = _call_model_sync(provider_name, model, messages)
+    ai_result = _call_model_sync(
+        provider_name, model, messages,
+        api_key=api_key, base_url=base_url,
+    )
 
     # 解析 AI 响应
     ai_content = ai_result.get("content", "")
@@ -285,6 +308,8 @@ def synthesize_cross_module(
     """
     provider_name = ai_config.get("provider", "ollama")
     model = ai_config.get("model", "qwen2.5-coder")
+    api_key = ai_config.get("api_key")
+    base_url = ai_config.get("base_url")
 
     if not provider_name or provider_name.lower() in ("none", "", "skip"):
         return {
@@ -393,7 +418,10 @@ def synthesize_cross_module(
     ]
 
     logger.info("正在执行跨模块 AI 综合分析: %s/%s", provider_name, model)
-    ai_result = _call_model_sync(provider_name, model, messages)
+    ai_result = _call_model_sync(
+        provider_name, model, messages,
+        api_key=api_key, base_url=base_url,
+    )
 
     ai_content = ai_result.get("content", "")
     test_suggestions = _extract_test_suggestions(ai_content)
