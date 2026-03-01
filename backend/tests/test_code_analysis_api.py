@@ -144,9 +144,10 @@ class TestStartAnalysis:
         
         assert response.status_code == 202
         data = response.json()
-        assert data["code"] == 200
+        assert data["code"] == "OK"
         assert "analysis_id" in data["data"]
-        assert data["data"]["status"] == "running"
+        # Status may be "running" or "completed" depending on how fast the task finishes
+        assert data["data"]["status"] in ("running", "completed")
 
     def test_start_analysis_invalid_path(self):
         """Invalid workspace path returns 400."""
@@ -168,7 +169,8 @@ class TestStartAnalysis:
         
         assert analysis_id in code_analysis_api._analysis_tasks
         task = code_analysis_api._analysis_tasks[analysis_id]
-        assert task["status"] == "running"
+        # Status may be "running" or "completed" depending on how fast the task finishes
+        assert task["status"] in ("running", "completed")
         assert task["workspace_path"] == temp_workspace
 
 

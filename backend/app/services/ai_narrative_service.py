@@ -10,12 +10,97 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from typing import Any
+
+import httpx
 
 from app.ai.prompt_templates import render_prompt
 from app.ai.provider_registry import get_provider
 
 logger = logging.getLogger(__name__)
+
+# 可重试的 HTTP 状态码
+_RETRYABLE_STATUS_CODES = {429, 502, 503, 504}
+
+
+def _extract_json_multilayer(content: str) -> dict[str, Any]:
+    """多层 JSON 提取 fallback
+    
+    层级:
+    1. 标准 json.loads()
+    2. 提取 ```json ... ``` 代码块
+    3. 正则提取最外层 {...} 或 [...]
+    4. 去除干扰后再解析
+    5. 返回 raw_content
+    """
+    if not content or not content.strip():
+        return {"error": "empty_content", "raw_content": ""}
+    
+    # Layer 1: 直接解析
+    try:
+        return json.loads(content)
+    except json.JSONDecodeError:
+        pass
+    
+    # Layer 2: 提取 ```json 代码块
+    if "```json" in content:
+        start = content.find("```json") + 7
+        end = content.find("```", start)
+        if end > start:
+            try:
+                return json.loads(content[start:end].strip())
+            except json.JSONDecodeError:
+                pass
+    
+    # Layer 2b: 提取 ``` 代码块
+    if "```" in content:
+        start = content.find("```") + 3
+        # 跳过语言标识符行
+        newline_pos = content.find("\n", start)
+        if newline_pos > start:
+            start = newline_pos + 1
+        end = content.find("```", start)
+        if end > start:
+            try:
+                return json.loads(content[start:end].strip())
+            except json.JSONDecodeError:
+                pass
+    
+    # Layer 3: 正则提取最外层 JSON 对象或数组
+    # 匹配 {...} 
+    obj_match = re.search(r"\{[\s\S]*\}", content)
+    if obj_match:
+        try:
+            return json.loads(obj_match.group())
+        except json.JSONDecodeError:
+            pass
+    
+    # 匹配 [...]
+    arr_match = re.search(r"\[[\s\S]*\]", content)
+    if arr_match:
+        try:
+            parsed = json.loads(arr_match.group())
+            return {"items": parsed} if isinstance(parsed, list) else parsed
+        except json.JSONDecodeError:
+            pass
+    
+    # Layer 4: 清理干扰后再解析
+    cleaned = content
+    # 去除 BOM
+    cleaned = cleaned.lstrip("\ufeff")
+    # 去除单行注释
+    cleaned = re.sub(r"//[^\n]*", "", cleaned)
+    # 去除尾部逗号
+    cleaned = re.sub(r",(\s*[}\]])", r"\1", cleaned)
+    
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError:
+        pass
+    
+    # Layer 5: 返回原始内容
+    return {"raw_content": content, "parse_error": "all_layers_failed"}
 
 
 async def _call_ai(
@@ -28,8 +113,12 @@ async def _call_ai(
     base_url: str | None = None,
     temperature: float = 0.3,
     max_tokens: int = 4096,
+    max_retries: int = 3,
 ) -> dict[str, Any]:
-    """Call AI model and parse JSON response."""
+    """Call AI model and parse JSON response with retry and fallback.
+    
+    实现指数退避重试和多层 JSON 解析 fallback。
+    """
     provider_kwargs: dict[str, Any] = {"model": model}
     if api_key:
         provider_kwargs["api_key"] = api_key
@@ -43,32 +132,139 @@ async def _call_ai(
         {"role": "user", "content": user_prompt},
     ]
     
-    try:
-        result = await provider.chat(
-            messages,
-            model=model,
-            temperature=temperature,
-            max_tokens=max_tokens,
-        )
-        content = result.get("content", "")
+    last_error: str | None = None
+    
+    for attempt in range(max_retries + 1):
+        try:
+            result = await provider.chat(
+                messages,
+                model=model,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+            content = result.get("content", "")
+            
+            # 使用多层 JSON 提取
+            return _extract_json_multilayer(content)
+            
+        except httpx.TimeoutException as e:
+            last_error = f"timeout: {e}"
+            if attempt < max_retries:
+                wait_time = 2 ** attempt
+                logger.warning(f"AI call timeout (attempt {attempt + 1}/{max_retries + 1}), "
+                             f"retrying in {wait_time}s...")
+                await asyncio.sleep(wait_time)
+                continue
+            logger.error(f"AI call failed after {max_retries + 1} attempts: timeout")
+            return {"error": "timeout_after_retries"}
+            
+        except httpx.HTTPStatusError as e:
+            status_code = e.response.status_code
+            last_error = f"http_{status_code}: {e}"
+            if status_code in _RETRYABLE_STATUS_CODES and attempt < max_retries:
+                wait_time = 2 ** attempt
+                logger.warning(f"AI call got {status_code} (attempt {attempt + 1}/{max_retries + 1}), "
+                             f"retrying in {wait_time}s...")
+                await asyncio.sleep(wait_time)
+                continue
+            logger.error(f"AI call failed with HTTP {status_code}: {e}")
+            return {"error": f"http_{status_code}", "detail": str(e)}
+            
+        except Exception as e:
+            last_error = str(e)
+            # 对于其他异常，也尝试重试
+            if attempt < max_retries:
+                wait_time = 2 ** attempt
+                logger.warning(f"AI call error (attempt {attempt + 1}/{max_retries + 1}): {e}, "
+                             f"retrying in {wait_time}s...")
+                await asyncio.sleep(wait_time)
+                continue
+            logger.error(f"AI call failed: {e}")
+            return {"error": str(e)}
+    
+    return {"error": last_error or "unknown_error"}
+
+
+def _smart_truncate(
+    source: str,
+    max_chars: int,
+    branches: list[dict[str, Any]] | None = None,
+) -> str:
+    """智能上下文截断
+    
+    保留策略:
+    1. 保留函数签名（第一行）
+    2. 保留分支结构行（if/else/switch/for/while）
+    3. 保留锁操作行
+    4. 截断中间纯计算行
+    5. 根据分支数动态调整保留量
+    
+    Args:
+        source: 源代码
+        max_chars: 最大字符数
+        branches: 分支信息列表，用于动态调整保留量
+    """
+    if len(source) <= max_chars:
+        return source
+    
+    lines = source.split("\n")
+    if not lines:
+        return source[:max_chars]
+    
+    # 根据分支数动态调整保留比例
+    num_branches = len(branches) if branches else 0
+    branch_factor = min(1.0 + num_branches * 0.1, 1.5)  # 最多增加 50%
+    adjusted_max = int(max_chars * branch_factor)
+    
+    # 关键行模式
+    important_patterns = [
+        r"^\s*(if|else|switch|case|for|while|do)\b",  # 分支/循环
+        r"\b(pthread_mutex_lock|pthread_mutex_unlock|lock|unlock|acquire|release)\b",  # 锁操作
+        r"\b(return|goto|break|continue)\b",  # 控制流
+        r"\b(malloc|free|calloc|realloc)\b",  # 内存操作
+        r"\b(open|close|read|write|send|recv)\b",  # IO操作
+    ]
+    
+    # 标记每行是否重要
+    important_lines: set[int] = {0}  # 第一行（签名）始终保留
+    for i, line in enumerate(lines):
+        for pattern in important_patterns:
+            if re.search(pattern, line):
+                important_lines.add(i)
+                break
+    
+    # 构建结果
+    result_lines: list[str] = []
+    current_len = 0
+    omitted_count = 0
+    in_omitted_section = False
+    
+    for i, line in enumerate(lines):
+        is_important = i in important_lines
+        line_len = len(line) + 1  # +1 for newline
         
-        # Try to extract JSON from response
-        if "```json" in content:
-            start = content.find("```json") + 7
-            end = content.find("```", start)
-            content = content[start:end].strip()
-        elif "```" in content:
-            start = content.find("```") + 3
-            end = content.find("```", start)
-            content = content[start:end].strip()
+        if is_important or current_len + line_len <= adjusted_max:
+            if in_omitted_section and omitted_count > 0:
+                result_lines.append(f"    // ... {omitted_count} lines omitted ...")
+                current_len += 30  # 估算省略行的长度
+                omitted_count = 0
+                in_omitted_section = False
+            
+            result_lines.append(line)
+            current_len += line_len
+        else:
+            omitted_count += 1
+            in_omitted_section = True
         
-        return json.loads(content)
-    except json.JSONDecodeError as e:
-        logger.warning(f"Failed to parse AI response as JSON: {e}")
-        return {"raw_content": content, "parse_error": str(e)}
-    except Exception as e:
-        logger.error(f"AI call failed: {e}")
-        return {"error": str(e)}
+        # 超过限制后，只保留重要行
+        if current_len > adjusted_max and not is_important:
+            continue
+    
+    # 添加最后的省略提示
+    if omitted_count > 0:
+        result_lines.append(f"    // ... {omitted_count} lines omitted ...")
+    
+    return "\n".join(result_lines)
 
 
 async def generate_flow_narrative(
@@ -113,14 +309,18 @@ async def generate_function_dictionary(
     callers: list[str],
     callees: list[str],
     ai_config: dict[str, Any],
+    branches: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Generate business-language function dictionary entry."""
+    # 使用智能截断而非简单截断
+    truncated_source = _smart_truncate(source_snippet, 2000, branches)
+    
     system, user = render_prompt(
         "function_dictionary",
         function_name=function_name,
         params=", ".join(params) if params else "无参数",
         comments=comments if comments else "无注释",
-        source_snippet=source_snippet[:2000],  # Limit source size
+        source_snippet=truncated_source,
         callers=", ".join(callers) if callers else "无",
         callees=", ".join(callees) if callees else "无",
     )
@@ -245,6 +445,7 @@ async def generate_batch_function_dictionary(
                 callers=func.get("callers", []),
                 callees=func.get("callees", []),
                 ai_config=ai_config,
+                branches=func.get("branches"),
             )
             return func["name"], result
     
@@ -355,7 +556,11 @@ class AINarrativeService:
                 "name": node.name,
                 "params": node.params,
                 "comments": "\n".join(c.text for c in node.comments),
-                "source": node.source[:500] if node.source else "",
+                "source": _smart_truncate(
+                    node.source, 500, 
+                    [{"type": b.branch_type, "condition": b.condition} for b in node.branches]
+                ) if node.source else "",
+                "branches": [{"type": b.branch_type, "condition": b.condition} for b in node.branches],
                 "callers": [
                     e.caller for e in fused_graph.edges if e.callee == node.name
                 ][:5],

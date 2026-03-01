@@ -42,6 +42,12 @@ class AnalysisRequest(BaseModel):
     workspace_path: str = Field(
         ..., description="Path to the code workspace to analyze"
     )
+    project_id: int | None = Field(
+        default=None, description="Associated project ID"
+    )
+    repo_id: int | None = Field(
+        default=None, description="Associated repository ID"
+    )
     enable_ai: bool = Field(
         default=True, description="Enable AI narrative generation"
     )
@@ -105,6 +111,8 @@ async def start_analysis(
         "result": None,
         "error": None,
         "workspace_path": req.workspace_path,
+        "project_id": req.project_id,
+        "repo_id": req.repo_id,
     }
     
     # Start background task
@@ -384,6 +392,8 @@ async def delete_analysis(analysis_id: str) -> dict:
 @router.get("/")
 async def list_analyses(
     status: str | None = Query(None, description="Filter by status"),
+    project_id: int | None = Query(None, description="Filter by project ID"),
+    repo_id: int | None = Query(None, description="Filter by repository ID"),
     limit: int = Query(20, ge=1, le=100),
 ) -> dict:
     """List all analysis tasks."""
@@ -391,10 +401,16 @@ async def list_analyses(
     for aid, task in _analysis_tasks.items():
         if status and task["status"] != status:
             continue
+        if project_id is not None and task.get("project_id") != project_id:
+            continue
+        if repo_id is not None and task.get("repo_id") != repo_id:
+            continue
         tasks.append({
             "analysis_id": aid,
             "status": task["status"],
             "workspace_path": task["workspace_path"],
+            "project_id": task.get("project_id"),
+            "repo_id": task.get("repo_id"),
             "started_at": task["started_at"],
             "completed_at": task.get("completed_at"),
         })

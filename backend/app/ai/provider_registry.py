@@ -18,11 +18,13 @@ _cache: dict[str, ModelProvider] = {}
 
 def _build(provider_name: str, **overrides: Any) -> ModelProvider:
     """Construct a provider instance from settings + optional overrides."""
+    proxy = overrides.get("proxy", settings.ai_proxy)
     if provider_name == "deepseek":
         return DeepSeekProvider(
             base_url=overrides.get("base_url", settings.deepseek_base_url),
             api_key=overrides.get("api_key", settings.deepseek_api_key),
             default_model=overrides.get("model", "deepseek-coder"),
+            proxy=proxy,
         )
     if provider_name == "custom":
         return CustomProvider(
@@ -31,6 +33,7 @@ def _build(provider_name: str, **overrides: Any) -> ModelProvider:
             default_model=overrides.get("model", settings.custom_model),
             chat_path=overrides.get("chat_path", "/v1/chat/completions"),
             health_path=overrides.get("health_path", "/v1/models"),
+            proxy=proxy,
         )
     raise ValueError(f"unknown provider: {provider_name}")
 

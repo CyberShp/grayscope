@@ -44,6 +44,10 @@ class Settings(BaseSettings):
     custom_api_key: Optional[str] = None
     custom_model: str = "default"
 
+    # --- AI Proxy (for internal network environments) ---
+    # Supports HTTP/HTTPS/SOCKS5 proxy, e.g. "http://proxy:8080" or "socks5://proxy:1080"
+    ai_proxy: Optional[str] = None
+
     # --- Prompt ---
     prompt_template_dir: str = str(
         Path(__file__).resolve().parent / "ai" / "prompt_templates"

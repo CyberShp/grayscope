@@ -113,8 +113,8 @@ class AnalysisResult:
                 name: {
                     "name": node.name,
                     "file_path": node.file_path,
-                    "start_line": node.start_line,
-                    "end_line": node.end_line,
+                    "start_line": node.line_start,
+                    "end_line": node.line_end,
                     "params": node.params,
                     "comments": [asdict(c) for c in node.comments],
                     "branches": [asdict(b) for b in node.branches],
@@ -317,7 +317,7 @@ class CodeAnalysisService:
                 "id": name,
                 "label": name,
                 "file": node.file_path,
-                "line": node.start_line,
+                "line": node.line_start,
                 "isEntryPoint": node.is_entry_point,
                 "entryType": node.entry_point_type,
                 "hasBranches": len(node.branches) > 0,
@@ -334,9 +334,9 @@ class CodeAnalysisService:
             edges.append({
                 "source": edge.caller,
                 "target": edge.callee,
-                "line": edge.call_line,
+                "line": edge.call_site_line,
                 "branchContext": edge.branch_context,
-                "locksHeld": edge.locks_held,
+                "locksHeld": edge.lock_held,
             })
         
         return {"nodes": nodes, "edges": edges}
@@ -347,12 +347,18 @@ class CodeAnalysisService:
             return {"states": [], "transitions": [], "mermaid": ""}
         
         psm = self.result.protocol_state_machine
-        states = psm.get("states", [])
+        states_raw = psm.get("states", {})
+        # Handle both dict and list formats for states
+        states_list = (
+            list(states_raw.values())
+            if isinstance(states_raw, dict)
+            else states_raw
+        )
         transitions = psm.get("transitions", [])
         
         # Generate Mermaid state diagram
         mermaid_lines = ["stateDiagram-v2"]
-        for state in states:
+        for state in states_list:
             if state.get("is_initial"):
                 mermaid_lines.append(f"    [*] --> {state['name']}")
             if state.get("is_error"):
@@ -367,7 +373,7 @@ class CodeAnalysisService:
             )
         
         return {
-            "states": states,
+            "states": states_list,
             "transitions": transitions,
             "mermaid": "\n".join(mermaid_lines),
         }

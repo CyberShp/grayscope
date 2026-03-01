@@ -21,6 +21,26 @@ from app.analyzers.fused_graph_builder import FusedGraph, FusedNode, FusedEdge
 
 logger = logging.getLogger(__name__)
 
+# 整数溢出检测正则
+_ARITH_OVERFLOW_RE = re.compile(r"(\w+)\s*([*+])\s*(\w+)")
+_MALLOC_MULTIPLY_RE = re.compile(r"(?:malloc|realloc)\s*\(\s*(\w+)\s*\*\s*(\w+)\s*\)")
+_RANGE_CHECK_RE = re.compile(r"if\s*\(\s*(\w+)\s*[<>]=?\s*\w+.*\)")
+
+# 缓冲区溢出检测正则
+_UNSAFE_STR_FUNCS = {"strcpy", "strcat", "sprintf", "gets", "scanf"}
+_UNSAFE_CALL_RE = re.compile(r"\b(strcpy|strcat|sprintf|gets)\s*\(([^)]+)\)")
+_SCANF_RE = re.compile(r"\bscanf\s*\(\s*\"[^\"]*%s[^\"]*\"")
+
+# 格式化字符串检测正则  
+_FORMAT_FUNCS = {"printf", "fprintf", "sprintf", "snprintf", "syslog"}
+_FORMAT_CALL_RE = re.compile(r"\b(printf|fprintf|sprintf|snprintf|syslog)\s*\(([^)]+)\)")
+
+# TOCTOU 检测正则
+_CHECK_FUNCS = {"access", "stat", "lstat", "fstat"}
+_USE_FUNCS = {"open", "unlink", "rename", "remove", "chmod", "chown"}
+_CHECK_RE = re.compile(r"\b(access|stat|lstat)\s*\(\s*([^,)]+)")
+_USE_RE = re.compile(r"\b(open|unlink|rename|remove|chmod|chown)\s*\(\s*([^,)]+)")
+
 
 @dataclass
 class RiskFinding:
@@ -73,6 +93,11 @@ class FusedRiskAnalyzer:
         self._analyze_protocol_risks()
         self._analyze_data_flow_branch_risks()
         self._analyze_comment_consistency()
+        # 新增的安全风险分析
+        self._analyze_integer_overflow_risks()
+        self._analyze_buffer_overflow_risks()
+        self._analyze_format_string_risks()
+        self._analyze_toctou_risks()
 
         return {
             "findings": [self._finding_to_dict(f) for f in self._findings],
@@ -88,7 +113,7 @@ class FusedRiskAnalyzer:
         """分析分支+调用链风险: error/cleanup 路径中的资源泄漏"""
         for chain in self._graph.call_chains:
             # 检查调用链中是否有 error/cleanup 分支
-            for i, branch_ctx in enumerate(chain.branch_path):
+            for i, branch_ctx in enumerate(chain.branch_coverage):
                 if not branch_ctx:
                     continue
                 
@@ -101,7 +126,7 @@ class FusedRiskAnalyzer:
                     continue
 
                 # 检查该分支后的函数是否有资源释放
-                callee = chain.chain[i + 1] if i + 1 < len(chain.chain) else None
+                callee = chain.functions[i + 1] if i + 1 < len(chain.functions) else None
                 if not callee:
                     continue
 
@@ -122,7 +147,7 @@ class FusedRiskAnalyzer:
                         risk_score=0.85,
                         title=f"错误路径资源泄漏: {callee}() 在 error 分支下锁未释放",
                         description=(
-                            f"在调用链 {' → '.join(chain.chain[:i+2])} 的错误分支 "
+                            f"在调用链 {' → '.join(chain.functions[:i+2])} 的错误分支 "
                             f"({branch_ctx}) 中，函数 {callee}() 获取了锁 {unreleased}，"
                             f"但未释放。当执行流进入此错误分支时，锁将永久持有，"
                             f"导致其他线程死等。"
@@ -132,14 +157,14 @@ class FusedRiskAnalyzer:
                         line_start=callee_node.line_start,
                         line_end=callee_node.line_end,
                         evidence={
-                            "call_chain": chain.chain[:i+2],
+                            "call_chain": chain.functions[:i+2],
                             "branch_context": branch_ctx,
                             "unreleased_locks": sorted(unreleased),
                             "acquired_locks": sorted(acquires),
                         },
-                        call_chain=chain.chain[:i+2],
+                        call_chain=chain.functions[:i+2],
                         branch_context=branch_ctx,
-                        related_functions=chain.chain[:i+2],
+                        related_functions=chain.functions[:i+2],
                         expected_outcome="错误路径正确释放所有资源",
                         unacceptable_outcomes=["锁泄漏", "死锁", "资源耗尽"],
                         test_suggestion="注入错误条件触发 error 分支，检查锁是否正确释放",
@@ -211,7 +236,7 @@ class FusedRiskAnalyzer:
         for chain in self._graph.call_chains:
             # 累积调用链中的锁获取顺序
             accumulated_locks: list[str] = []
-            for i, fn in enumerate(chain.chain):
+            for i, fn in enumerate(chain.functions):
                 node = self._graph.nodes.get(fn)
                 if not node:
                     continue
@@ -220,7 +245,7 @@ class FusedRiskAnalyzer:
                         accumulated_locks.append(op.lock_name)
             
             if len(accumulated_locks) >= 2:
-                chain_key = "→".join(chain.chain[:3])
+                chain_key = "→".join(chain.functions[:3])
                 func_lock_order[chain_key] = accumulated_locks
 
         # 检查锁顺序冲突
@@ -274,7 +299,7 @@ class FusedRiskAnalyzer:
 
             # 检查协议操作序列中的异常
             for i, (fn, branch_ctx, locks) in enumerate(
-                zip(chain.chain, chain.branch_path, chain.locks_held)
+                zip(chain.functions, chain.branch_coverage, chain.lock_sequence)
             ):
                 node = self._graph.nodes.get(fn)
                 if not node:
@@ -316,11 +341,11 @@ class FusedRiskAnalyzer:
                                 evidence={
                                     "protocol_op": proto_op.op_type,
                                     "branch_context": branch_ctx,
-                                    "call_chain": chain.chain[:i+1],
+                                    "call_chain": chain.functions[:i+1],
                                 },
-                                call_chain=chain.chain[:i+1],
+                                call_chain=chain.functions[:i+1],
                                 branch_context=branch_ctx,
-                                related_functions=chain.chain[:i+1],
+                                related_functions=chain.functions[:i+1],
                                 expected_outcome="错误路径关闭连接/释放资源",
                                 unacceptable_outcomes=["连接泄漏", "FD 耗尽", "资源挂起"],
                             ))
@@ -456,6 +481,308 @@ class FusedRiskAnalyzer:
                             inconsistency_type="return_value",
                             severity="S2",
                         ))
+
+    def _analyze_integer_overflow_risks(self) -> None:
+        """检测整数溢出风险
+        
+        识别:
+        - malloc(a * b) 中的乘法溢出
+        - 无范围校验的算术运算
+        """
+        for name, node in self._graph.nodes.items():
+            source = node.source
+            lines = source.split("\n")
+            
+            # 检测 malloc 乘法
+            for m in _MALLOC_MULTIPLY_RE.finditer(source):
+                var1, var2 = m.group(1), m.group(2)
+                line_offset = source[:m.start()].count("\n")
+                actual_line = node.line_start + line_offset
+                
+                # 检查是否有前置范围校验
+                has_check = False
+                for i, line in enumerate(lines[:line_offset]):
+                    if _RANGE_CHECK_RE.search(line):
+                        if var1 in line or var2 in line:
+                            has_check = True
+                            break
+                
+                if not has_check:
+                    self._findings.append(RiskFinding(
+                        finding_id=self._new_finding_id(),
+                        risk_type="integer_overflow",
+                        severity="S1",
+                        risk_score=0.75,
+                        title=f"潜在整数溢出: malloc({var1} * {var2})",
+                        description=f"在 malloc 调用中对 {var1} 和 {var2} 进行乘法运算，"
+                                   f"如果这两个变量来源于外部输入，可能导致整数溢出和堆溢出",
+                        file_path=node.file_path,
+                        symbol_name=name,
+                        line_start=actual_line,
+                        line_end=actual_line,
+                        evidence={
+                            "operand1": var1,
+                            "operand2": var2,
+                            "operation": "multiplication in malloc",
+                            "has_range_check": False,
+                        },
+                        expected_outcome="分配的内存大小正确",
+                        unacceptable_outcomes=["整数溢出导致分配过小的缓冲区", "堆溢出"],
+                        test_suggestion=f"测试 {var1} 和 {var2} 接近 SIZE_MAX/2 时的行为",
+                    ))
+            
+            # 检测通用算术溢出（针对敏感变量）
+            for m in _ARITH_OVERFLOW_RE.finditer(source):
+                var1, op, var2 = m.group(1), m.group(2), m.group(3)
+                
+                # 只关注涉及 size/len/count 等敏感命名的变量
+                if not any(kw in var1.lower() or kw in var2.lower() 
+                          for kw in ("size", "len", "count", "num", "idx")):
+                    continue
+                
+                line_offset = source[:m.start()].count("\n")
+                actual_line = node.line_start + line_offset
+                
+                # 检查前置范围校验
+                has_check = False
+                for i, line in enumerate(lines[:line_offset]):
+                    if _RANGE_CHECK_RE.search(line) and (var1 in line or var2 in line):
+                        has_check = True
+                        break
+                
+                if not has_check:
+                    self._findings.append(RiskFinding(
+                        finding_id=self._new_finding_id(),
+                        risk_type="integer_overflow",
+                        severity="S2",
+                        risk_score=0.5,
+                        title=f"潜在整数溢出: {var1} {op} {var2}",
+                        description=f"对敏感变量进行算术运算，缺少范围校验",
+                        file_path=node.file_path,
+                        symbol_name=name,
+                        line_start=actual_line,
+                        line_end=actual_line,
+                        evidence={
+                            "operand1": var1,
+                            "operand2": var2,
+                            "operation": op,
+                            "has_range_check": False,
+                        },
+                        expected_outcome="算术运算结果在有效范围内",
+                        unacceptable_outcomes=["整数溢出", "下溢"],
+                        test_suggestion=f"测试边界值时 {var1} {op} {var2} 的行为",
+                    ))
+
+    def _analyze_buffer_overflow_risks(self) -> None:
+        """检测缓冲区溢出风险
+        
+        识别不安全函数调用: strcpy, strcat, sprintf, gets
+        """
+        for name, node in self._graph.nodes.items():
+            source = node.source
+            
+            for m in _UNSAFE_CALL_RE.finditer(source):
+                func_name = m.group(1)
+                args_str = m.group(2)
+                line_offset = source[:m.start()].count("\n")
+                actual_line = node.line_start + line_offset
+                
+                # 检查数据流标签是否包含外部输入
+                has_external_input = False
+                for edge in self._graph.edges:
+                    if edge.caller == name and "potential_external_input" in edge.data_flow_tags:
+                        has_external_input = True
+                        break
+                
+                severity = "S0" if has_external_input else "S1"
+                risk_score = 0.9 if has_external_input else 0.7
+                
+                safe_alt = {
+                    "strcpy": "strncpy",
+                    "strcat": "strncat",
+                    "sprintf": "snprintf",
+                    "gets": "fgets",
+                }.get(func_name, "N/A")
+                
+                self._findings.append(RiskFinding(
+                    finding_id=self._new_finding_id(),
+                    risk_type="buffer_overflow",
+                    severity=severity,
+                    risk_score=risk_score,
+                    title=f"不安全函数调用: {func_name}()",
+                    description=f"使用不安全的字符串函数 {func_name}，应替换为 {safe_alt}",
+                    file_path=node.file_path,
+                    symbol_name=name,
+                    line_start=actual_line,
+                    line_end=actual_line,
+                    evidence={
+                        "unsafe_function": func_name,
+                        "safe_alternative": safe_alt,
+                        "args": args_str[:100],
+                        "has_external_input": has_external_input,
+                    },
+                    expected_outcome="字符串操作不超出缓冲区边界",
+                    unacceptable_outcomes=["缓冲区溢出", "内存损坏", "代码执行"],
+                    test_suggestion=f"测试当输入超过目标缓冲区大小时的行为",
+                ))
+            
+            # 检测 scanf %s
+            if _SCANF_RE.search(source):
+                line_offset = source.find("scanf")
+                if line_offset >= 0:
+                    actual_line = node.line_start + source[:line_offset].count("\n")
+                    self._findings.append(RiskFinding(
+                        finding_id=self._new_finding_id(),
+                        risk_type="buffer_overflow",
+                        severity="S0",
+                        risk_score=0.9,
+                        title="不安全的 scanf %s 使用",
+                        description="scanf 使用 %s 格式化符而没有长度限制，可能导致缓冲区溢出",
+                        file_path=node.file_path,
+                        symbol_name=name,
+                        line_start=actual_line,
+                        line_end=actual_line,
+                        evidence={"pattern": "scanf with %s"},
+                        expected_outcome="输入被正确截断",
+                        unacceptable_outcomes=["缓冲区溢出"],
+                        test_suggestion="测试超长输入时的行为，应使用 %Ns 指定长度",
+                    ))
+
+    def _analyze_format_string_risks(self) -> None:
+        """检测格式化字符串漏洞
+        
+        识别 printf 等函数的 format 参数不是字面字符串的情况
+        """
+        for name, node in self._graph.nodes.items():
+            source = node.source
+            
+            for m in _FORMAT_CALL_RE.finditer(source):
+                func_name = m.group(1)
+                args_str = m.group(2).strip()
+                line_offset = source[:m.start()].count("\n")
+                actual_line = node.line_start + line_offset
+                
+                # 解析第一个参数（format string 位置）
+                # fprintf 第一个参数是 FILE*，format 是第二个
+                args = [a.strip() for a in args_str.split(",")]
+                if not args:
+                    continue
+                
+                if func_name == "fprintf" or func_name == "syslog":
+                    format_arg = args[1] if len(args) > 1 else ""
+                else:
+                    format_arg = args[0]
+                
+                # 检查 format 参数是否是字面字符串
+                if format_arg.startswith('"') and format_arg.endswith('"'):
+                    continue  # 字面字符串，安全
+                
+                # 不是字面字符串，可能是变量
+                if not format_arg:
+                    continue
+                
+                # 检查该变量是否来自函数参数或外部输入
+                is_from_param = format_arg in node.params
+                
+                severity = "S0" if is_from_param else "S1"
+                risk_score = 0.85 if is_from_param else 0.65
+                
+                self._findings.append(RiskFinding(
+                    finding_id=self._new_finding_id(),
+                    risk_type="format_string",
+                    severity=severity,
+                    risk_score=risk_score,
+                    title=f"格式化字符串漏洞: {func_name}({format_arg})",
+                    description=f"{func_name} 的格式化参数不是字面字符串，可能导致格式化字符串攻击",
+                    file_path=node.file_path,
+                    symbol_name=name,
+                    line_start=actual_line,
+                    line_end=actual_line,
+                    evidence={
+                        "function": func_name,
+                        "format_arg": format_arg[:50],
+                        "is_from_param": is_from_param,
+                    },
+                    expected_outcome="格式化字符串是静态定义的",
+                    unacceptable_outcomes=["任意内存读取", "任意内存写入", "信息泄露"],
+                    test_suggestion=f"测试当 {format_arg} 包含 %n, %x 等格式符时的行为",
+                ))
+
+    def _analyze_toctou_risks(self) -> None:
+        """检测 TOCTOU (Time-of-check Time-of-use) 竞态条件
+        
+        识别 access()/stat() 后接 open()/unlink() 的模式
+        """
+        for name, node in self._graph.nodes.items():
+            source = node.source
+            lines = source.split("\n")
+            
+            # 收集所有检查操作
+            checks: list[tuple[int, str, str]] = []  # (line_offset, func, path)
+            for m in _CHECK_RE.finditer(source):
+                line_offset = source[:m.start()].count("\n")
+                func = m.group(1)
+                path_arg = m.group(2).strip()
+                checks.append((line_offset, func, path_arg))
+            
+            # 收集所有使用操作
+            uses: list[tuple[int, str, str]] = []
+            for m in _USE_RE.finditer(source):
+                line_offset = source[:m.start()].count("\n")
+                func = m.group(1)
+                path_arg = m.group(2).strip()
+                uses.append((line_offset, func, path_arg))
+            
+            # 检测检查-使用对
+            for check_line, check_func, check_path in checks:
+                for use_line, use_func, use_path in uses:
+                    # 使用操作必须在检查之后
+                    if use_line <= check_line:
+                        continue
+                    
+                    # 检查路径是否匹配（简化：变量名相同）
+                    check_var = check_path.strip('"').strip()
+                    use_var = use_path.strip('"').strip()
+                    if check_var != use_var:
+                        continue
+                    
+                    # 检查两个操作之间是否有锁保护
+                    has_lock = False
+                    for lop in node.lock_ops:
+                        lock_line = lop.line - node.line_start
+                        if check_line < lock_line < use_line and lop.op == "acquire":
+                            has_lock = True
+                            break
+                    
+                    if has_lock:
+                        continue
+                    
+                    actual_line = node.line_start + check_line
+                    
+                    self._findings.append(RiskFinding(
+                        finding_id=self._new_finding_id(),
+                        risk_type="toctou",
+                        severity="S1",
+                        risk_score=0.7,
+                        title=f"TOCTOU 竞态: {check_func}() -> {use_func}()",
+                        description=f"在 {check_func}({check_path}) 检查后调用 {use_func}()，"
+                                   f"攻击者可能在检查和使用之间修改文件状态",
+                        file_path=node.file_path,
+                        symbol_name=name,
+                        line_start=actual_line,
+                        line_end=node.line_start + use_line,
+                        evidence={
+                            "check_func": check_func,
+                            "use_func": use_func,
+                            "path": check_path[:50],
+                            "check_line": actual_line,
+                            "use_line": node.line_start + use_line,
+                            "has_lock": False,
+                        },
+                        expected_outcome="文件操作是原子性的或有适当的同步",
+                        unacceptable_outcomes=["权限绕过", "符号链接攻击", "文件替换攻击"],
+                        test_suggestion="测试在检查和使用之间修改文件或替换为符号链接的场景",
+                    ))
 
     def _finding_to_dict(self, f: RiskFinding) -> dict:
         return {

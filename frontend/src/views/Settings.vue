@@ -264,10 +264,29 @@ function setDefault(m) {
   ElMessage.success(`已将 ${m.display_name} 设为默认提供商`)
 }
 
-function saveDefaultModel() {
-  localStorage.setItem('gs_default_provider', defaultProvider.value)
-  localStorage.setItem('gs_default_model', defaultModel.value)
-  ElMessage.success(`默认 AI 配置已保存: ${defaultProvider.value} / ${defaultModel.value}`)
+async function saveDefaultModel() {
+  try {
+    const payload = {
+      provider: defaultProvider.value,
+      default_provider: defaultProvider.value,
+      default_model: defaultModel.value,
+    }
+    const res = await fetch('/api/v1/models/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+    const data = await res.json()
+    if (data.code === 'OK') {
+      localStorage.setItem('gs_default_provider', defaultProvider.value)
+      localStorage.setItem('gs_default_model', defaultModel.value)
+      ElMessage.success(`默认 AI 配置已保存: ${defaultProvider.value} / ${defaultModel.value}`)
+    } else {
+      ElMessage.error(data.message || '保存失败')
+    }
+  } catch (e) {
+    ElMessage.error(`保存失败: ${e.message}`)
+  }
 }
 
 const apiKeys = ref({ deepseek: '', custom: '' })
@@ -312,14 +331,33 @@ function resetQualityGate() {
   qualityGate.value = { max_risk_score: 60, max_s0_count: 0, max_s1_count: 3 }
 }
 
+async function loadDefaults() {
+  try {
+    const res = await fetch('/api/v1/models/defaults')
+    const data = await res.json()
+    if (data.code === 'OK' && data.data) {
+      if (data.data.default_provider) {
+        defaultProvider.value = data.data.default_provider
+        localStorage.setItem('gs_default_provider', data.data.default_provider)
+      }
+      if (data.data.default_model) {
+        defaultModel.value = data.data.default_model
+        localStorage.setItem('gs_default_model', data.data.default_model)
+      }
+    }
+  } catch (_) {
+    // Fall back to localStorage
+    const savedProvider = localStorage.getItem('gs_default_provider')
+    const savedModel = localStorage.getItem('gs_default_model')
+    if (savedProvider) defaultProvider.value = savedProvider
+    if (savedModel) defaultModel.value = savedModel
+  }
+}
+
 onMounted(() => {
   loadModels()
   loadSettings()
-  // Restore saved defaults
-  const savedProvider = localStorage.getItem('gs_default_provider')
-  const savedModel = localStorage.getItem('gs_default_model')
-  if (savedProvider) defaultProvider.value = savedProvider
-  if (savedModel) defaultModel.value = savedModel
+  loadDefaults()
 })
 </script>
 

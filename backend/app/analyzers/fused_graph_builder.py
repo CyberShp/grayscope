@@ -66,6 +66,14 @@ class FunctionComment:
 
 
 @dataclass
+class FuncPtrAssignment:
+    """函数指针赋值"""
+    ptr_name: str  # 指针变量名
+    target_func: str  # 指向的函数名
+    line: int
+
+
+@dataclass
 class FusedNode:
     """函数节点 — 融合了分支/锁/协议信息"""
     name: str
@@ -81,6 +89,7 @@ class FusedNode:
     protocol_ops: list[ProtocolOp]
     is_entry_point: bool
     entry_point_type: str  # handler, callback, cmd, ioctl, main, thread_entry, none
+    func_ptr_assignments: list[FuncPtrAssignment] = field(default_factory=list)
 
 
 @dataclass
@@ -98,10 +107,12 @@ class FusedEdge:
 @dataclass
 class CallChain:
     """预计算的调用链"""
-    chain: list[str]  # 函数名序列
+    functions: list[str]  # 函数名序列
     entry_point: str
-    branch_path: list[str]  # 每一步的分支条件
-    locks_held: list[list[str]]  # 每一步持有的锁
+    entry_type: str  # 入口类型 (handler, callback, cmd, ioctl, main, thread_entry, none)
+    depth: int  # 调用链深度
+    branch_coverage: list[str]  # 每一步的分支条件
+    lock_sequence: list[list[str]]  # 每一步持有的锁
     protocol_sequence: list[str]  # 协议操作序列
 
 
@@ -163,10 +174,12 @@ class FusedGraph:
             ],
             "call_chains": [
                 {
-                    "chain": c.chain,
+                    "functions": c.functions,
                     "entry_point": c.entry_point,
-                    "branch_path": c.branch_path,
-                    "locks_held": c.locks_held,
+                    "entry_type": c.entry_type,
+                    "depth": c.depth,
+                    "branch_coverage": c.branch_coverage,
+                    "lock_sequence": c.lock_sequence,
                     "protocol_sequence": c.protocol_sequence,
                 }
                 for c in self.call_chains
@@ -227,6 +240,41 @@ _IGNORE_CALLS = {
     "NULL", "TRUE", "FALSE", "true", "false",
 }
 
+# 函数指针赋值识别模式
+# 匹配: ptr = func_name, ptr = &func_name, struct.member = func_name, array[i] = func_name
+# 以及声明式: void (*ptr)(int) = func_name
+_FUNC_PTR_ASSIGN_RE = re.compile(
+    r"(?:"
+    # 声明式: type (*name)(params) = func
+    r"\(\s*\*\s*(\w+)\s*\)\s*\([^)]*\)\s*=\s*&?\s*([a-zA-Z_]\w*)"
+    r"|"
+    # 赋值式: name = func
+    r"(\w+(?:\.\w+|\[\w+\])?)\s*=\s*&?\s*([a-zA-Z_]\w*)"
+    r")\s*[;,)]"
+)
+
+# typedef 识别模式
+_TYPEDEF_RE = re.compile(
+    r"typedef\s+(?:[\w\s*]+)\s+(\w+)\s*;",
+    re.MULTILINE,
+)
+
+# typedef 函数指针识别模式: typedef ret_type (*name)(params);
+_TYPEDEF_FUNCPTR_RE = re.compile(
+    r"typedef\s+[\w\s*]+\s*\(\s*\*\s*(\w+)\s*\)\s*\([^)]*\)\s*;"
+)
+
+# 锁宏识别模式
+_LOCK_MACRO_RE = re.compile(
+    r"\b(LOCK_GUARD|SCOPED_LOCK|WITH_LOCK|MUTEX_LOCK|SPIN_LOCK|"
+    r"RW_LOCK_READ|RW_LOCK_WRITE|AUTO_LOCK|GUARD|LOCK)\s*\(\s*&?\s*(\w+)"
+)
+
+# 宏定义展开识别: #define MACRO(args) real_func(args)
+_MACRO_FUNC_DEF_RE = re.compile(
+    r"#define\s+(\w+)\s*\([^)]*\)\s+(\w+)\s*\("
+)
+
 
 class FusedGraphBuilder:
     """融合图构建器"""
@@ -236,9 +284,26 @@ class FusedGraphBuilder:
             raise RuntimeError("tree-sitter grammars not available")
         self._parser = CodeParser()
         self._graph: FusedGraph | None = None
+        # 新增: typedef 映射 (new_type -> original_type)
+        self._typedefs: dict[str, str] = {}
+        # 新增: 函数指针映射 (ptr_name -> func_name), 全局级别
+        self._global_func_ptr_map: dict[str, str] = {}
+        # 新增: 宏-函数映射 (macro_name -> real_func_name)
+        self._macro_expansions: dict[str, str] = {}
 
-    def build(self, workspace_path: str, max_files: int = 500) -> FusedGraph:
-        """构建融合图"""
+    def build(
+        self, 
+        workspace_path: str, 
+        max_files: int = 500,
+        parallel_workers: int | None = None,
+    ) -> FusedGraph:
+        """构建融合图
+        
+        Args:
+            workspace_path: 工作区路径
+            max_files: 最大解析文件数
+            parallel_workers: 并行工作线程数，默认为 CPU 核心数
+        """
         workspace = Path(workspace_path)
         
         self._graph = FusedGraph(
@@ -249,35 +314,24 @@ class FusedGraphBuilder:
             protocol_state_machine={},
         )
 
-        exts = {".c", ".h", ".cpp", ".cc", ".cxx", ".hpp"}
-        files = sorted(
-            [p for p in workspace.rglob("*") if p.suffix in exts and p.is_file()]
-        )[:max_files]
+        # 收集待解析文件
+        files = self._collect_files(workspace, max_files)
+        if not files:
+            return self._graph
 
-        # Pass 1: 收集全局变量和所有函数定义
-        function_sources: list[tuple[str, str, str, int, int]] = []
-        defined_functions: set[str] = set()
+        # Pass 0: 预扫描收集 typedef 和宏定义（需要先收集这些才能构建动态正则）
+        file_contents = self._prescan_files(files)
 
-        for fpath in files:
-            try:
-                source_text = fpath.read_text(errors="replace")
-                # 收集全局变量
-                for m in _GLOBAL_VAR_RE.finditer(source_text):
-                    self._graph.global_vars.add(m.group(1))
+        # 构建动态全局变量正则（包含 typedef 类型）
+        dynamic_global_var_re = self._build_global_var_regex()
 
-                # 解析函数
-                symbols = self._parser.parse_file(fpath)
-                rel_path = str(fpath.relative_to(workspace)) if workspace else str(fpath)
+        # Pass 1: 并行解析文件，收集全局变量和函数定义
+        parse_results = self._parallel_parse_files(
+            files, workspace, file_contents, dynamic_global_var_re, parallel_workers
+        )
 
-                for sym in symbols:
-                    if sym.kind == "function":
-                        defined_functions.add(sym.name)
-                        function_sources.append((
-                            sym.name, sym.source, rel_path,
-                            sym.line_start, sym.line_end
-                        ))
-            except Exception as exc:
-                logger.warning("解析文件失败 %s: %s", fpath, exc)
+        # 合并解析结果
+        function_sources, defined_functions = self._merge_parse_results(parse_results)
 
         # Pass 2: 为每个函数提取详细信息
         for fn_name, fn_source, file_path, line_start, line_end in function_sources:
@@ -302,6 +356,134 @@ class FusedGraphBuilder:
         self._extract_protocol_state_machine()
 
         return self._graph
+
+    def _collect_files(self, workspace: Path, max_files: int) -> list[Path]:
+        """收集待解析文件"""
+        exts = {".c", ".h", ".cpp", ".cc", ".cxx", ".hpp"}
+        files = sorted(
+            [p for p in workspace.rglob("*") if p.suffix in exts and p.is_file()]
+        )[:max_files]
+        return files
+
+    def _prescan_files(self, files: list[Path]) -> dict[Path, str]:
+        """预扫描文件，收集 typedef 和宏定义"""
+        file_contents: dict[Path, str] = {}
+        
+        for fpath in files:
+            try:
+                source_text = fpath.read_text(errors="replace")
+                file_contents[fpath] = source_text
+                
+                # 收集 typedef 定义
+                for m in _TYPEDEF_RE.finditer(source_text):
+                    typedef_name = m.group(1)
+                    self._typedefs[typedef_name] = typedef_name
+                for m in _TYPEDEF_FUNCPTR_RE.finditer(source_text):
+                    self._typedefs[m.group(1)] = "funcptr"
+                
+                # 收集宏-函数映射
+                for m in _MACRO_FUNC_DEF_RE.finditer(source_text):
+                    macro_name, real_func = m.group(1), m.group(2)
+                    self._macro_expansions[macro_name] = real_func
+            except Exception as exc:
+                logger.warning("预扫描文件失败 %s: %s", fpath, exc)
+        
+        return file_contents
+
+    def _parse_single_file(
+        self,
+        fpath: Path,
+        workspace: Path,
+        file_contents: dict[Path, str],
+        global_var_re: re.Pattern[str],
+    ) -> tuple[list[tuple[str, str, str, int, int]], set[str], set[str]]:
+        """解析单个文件
+        
+        Returns:
+            (function_sources, defined_functions, global_vars)
+        """
+        function_sources: list[tuple[str, str, str, int, int]] = []
+        defined_functions: set[str] = set()
+        global_vars: set[str] = set()
+        
+        try:
+            source_text = file_contents.get(fpath)
+            if source_text is None:
+                source_text = fpath.read_text(errors="replace")
+            
+            # 收集全局变量
+            for m in global_var_re.finditer(source_text):
+                global_vars.add(m.group(1))
+
+            # 解析函数
+            symbols = self._parser.parse_file(fpath)
+            rel_path = str(fpath.relative_to(workspace)) if workspace else str(fpath)
+
+            for sym in symbols:
+                if sym.kind == "function":
+                    defined_functions.add(sym.name)
+                    function_sources.append((
+                        sym.name, sym.source, rel_path,
+                        sym.line_start, sym.line_end
+                    ))
+        except Exception as exc:
+            logger.warning("解析文件失败 %s: %s", fpath, exc)
+        
+        return function_sources, defined_functions, global_vars
+
+    def _parallel_parse_files(
+        self,
+        files: list[Path],
+        workspace: Path,
+        file_contents: dict[Path, str],
+        global_var_re: re.Pattern[str],
+        workers: int | None = None,
+    ) -> list[tuple[list[tuple[str, str, str, int, int]], set[str], set[str]]]:
+        """并行解析多个文件"""
+        import os
+        from concurrent.futures import ThreadPoolExecutor
+        
+        if workers is None:
+            workers = min(os.cpu_count() or 4, len(files), 8)
+        
+        # 对于小文件集，串行处理可能更快
+        if len(files) < 4:
+            return [
+                self._parse_single_file(f, workspace, file_contents, global_var_re)
+                for f in files
+            ]
+        
+        results = []
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = [
+                executor.submit(
+                    self._parse_single_file, f, workspace, file_contents, global_var_re
+                )
+                for f in files
+            ]
+            for future in futures:
+                try:
+                    results.append(future.result())
+                except Exception as exc:
+                    logger.warning("并行解析任务失败: %s", exc)
+                    results.append(([], set(), set()))
+        
+        return results
+
+    def _merge_parse_results(
+        self,
+        results: list[tuple[list[tuple[str, str, str, int, int]], set[str], set[str]]],
+    ) -> tuple[list[tuple[str, str, str, int, int]], set[str]]:
+        """合并解析结果"""
+        function_sources: list[tuple[str, str, str, int, int]] = []
+        defined_functions: set[str] = set()
+        
+        for fn_sources, fn_names, global_vars in results:
+            function_sources.extend(fn_sources)
+            defined_functions.update(fn_names)
+            self._graph.global_vars.update(global_vars)
+        
+        return function_sources, defined_functions
 
     def _build_fused_node(
         self,
@@ -345,6 +527,9 @@ class FusedGraphBuilder:
         # 检查是否为入口点
         is_entry, entry_type = self._check_entry_point(fn_name)
 
+        # 提取函数指针赋值
+        func_ptr_assignments = self._extract_func_ptr_assignments(fn_source, line_start)
+
         return FusedNode(
             name=fn_name,
             file_path=file_path,
@@ -359,6 +544,7 @@ class FusedGraphBuilder:
             protocol_ops=protocol_ops,
             is_entry_point=is_entry,
             entry_point_type=entry_type,
+            func_ptr_assignments=func_ptr_assignments,
         )
 
     def _extract_params(self, source: str, fn_name: str) -> list[str]:
@@ -506,6 +692,23 @@ class FusedGraphBuilder:
                 line=line_start + line_offset,
             ))
 
+        # 识别锁宏 (LOCK_GUARD, SCOPED_LOCK, etc.)
+        # 这些宏通常在作用域内自动获取和释放锁
+        for m in _LOCK_MACRO_RE.finditer(source):
+            line_offset = source[:m.start()].count("\n")
+            macro_name = m.group(1)
+            lock_name = m.group(2)
+            
+            # 锁宏视为 acquire (作用域结束自动 release)
+            ops.append(LockOp(
+                lock_name=lock_name,
+                op="acquire",
+                line=line_start + line_offset,
+            ))
+            
+            # 对于 SCOPED/GUARD 类型的宏，在函数末尾自动释放
+            # 这里简化处理：不添加显式 release，因为作用域自动管理
+
         return ops
 
     def _extract_shared_var_access(
@@ -592,6 +795,75 @@ class FusedGraphBuilder:
                 return True, entry_type
         return False, "none"
 
+    def _build_global_var_regex(self) -> re.Pattern[str]:
+        """构建动态全局变量正则，包含收集到的 typedef 类型"""
+        base_types = (
+            r"int|char|void|unsigned|long|short|"
+            r"size_t|uint\d+_t|int\d+_t|bool|float|double|struct\s+\w+"
+        )
+        
+        # 添加收集到的 typedef 名作为可识别类型
+        if self._typedefs:
+            typedef_names = "|".join(re.escape(t) for t in self._typedefs.keys())
+            type_pattern = f"(?:{base_types}|{typedef_names})"
+        else:
+            type_pattern = f"(?:{base_types})"
+        
+        pattern = (
+            rf"^(?:static\s+)?(?:volatile\s+)?(?:{type_pattern}\s*\*?\s+)"
+            rf"(\w+)\s*(?:=|;|\[)"
+        )
+        return re.compile(pattern, re.MULTILINE)
+
+    def _extract_func_ptr_assignments(
+        self, source: str, line_start: int
+    ) -> list[FuncPtrAssignment]:
+        """提取函数指针赋值
+        
+        识别模式:
+        - void (*ptr)(int) = func_name (声明式)
+        - ptr = func_name
+        - ptr = &func_name
+        - struct.member = func_name
+        - array[i] = func_name
+        """
+        assignments: list[FuncPtrAssignment] = []
+        lines = source.split("\n")
+        
+        for line_idx, line in enumerate(lines):
+            actual_line = line_start + line_idx
+            
+            for m in _FUNC_PTR_ASSIGN_RE.finditer(line):
+                # 新的正则有4组:
+                # - Group 1, 2: 声明式 (*ptr)(params) = func
+                # - Group 3, 4: 赋值式 ptr = func
+                if m.group(1) and m.group(2):
+                    ptr_name = m.group(1)
+                    target_func = m.group(2)
+                elif m.group(3) and m.group(4):
+                    ptr_name = m.group(3)
+                    target_func = m.group(4)
+                else:
+                    continue
+                
+                # 过滤掉明显不是函数赋值的情况
+                if target_func in _IGNORE_CALLS:
+                    continue
+                # 过滤掉数值赋值
+                if target_func.isdigit():
+                    continue
+                # 过滤掉字符串赋值
+                if target_func.startswith('"') or target_func.startswith("'"):
+                    continue
+                
+                assignments.append(FuncPtrAssignment(
+                    ptr_name=ptr_name,
+                    target_func=target_func,
+                    line=actual_line,
+                ))
+        
+        return assignments
+
     def _extract_fused_edges(
         self,
         fn_name: str,
@@ -637,11 +909,38 @@ class FusedGraphBuilder:
                 if ln <= actual_line:
                     current_locks = lock_state_by_line[ln]
 
+            # 构建本函数内的函数指针映射
+            local_func_ptr_map: dict[str, str] = {}
+            for fpa in node.func_ptr_assignments:
+                if fpa.line <= actual_line:
+                    local_func_ptr_map[fpa.ptr_name] = fpa.target_func
+
             for m in _CALL_RE.finditer(line):
                 callee = m.group(1)
                 if callee in _IGNORE_CALLS or callee.isupper():
                     continue
-                if callee == fn_name or callee not in defined_functions:
+                if callee == fn_name:
+                    continue
+                
+                # 尝试解析间接调用
+                resolved_callee = callee
+                is_indirect = False
+                
+                # 1. 检查宏展开
+                if callee in self._macro_expansions:
+                    resolved_callee = self._macro_expansions[callee]
+                    is_indirect = True
+                # 2. 检查本函数内的函数指针
+                elif callee in local_func_ptr_map:
+                    resolved_callee = local_func_ptr_map[callee]
+                    is_indirect = True
+                # 3. 检查全局函数指针
+                elif callee in self._global_func_ptr_map:
+                    resolved_callee = self._global_func_ptr_map[callee]
+                    is_indirect = True
+                
+                # 只有解析后的函数在已定义函数集中才记录边
+                if resolved_callee not in defined_functions:
                     continue
 
                 # 提取参数
@@ -649,7 +948,7 @@ class FusedGraphBuilder:
                 arg_exprs = self._parse_args(raw_args)
 
                 # 构建参数映射
-                callee_node = self._graph.nodes.get(callee) if self._graph else None
+                callee_node = self._graph.nodes.get(resolved_callee) if self._graph else None
                 callee_params = callee_node.params if callee_node else []
                 arg_mapping = []
                 for idx, expr in enumerate(arg_exprs):
@@ -662,13 +961,15 @@ class FusedGraphBuilder:
                     arg_mapping.append(mapping)
 
                 # 检测数据流标签
-                data_flow_tags = []
+                data_flow_tags: list[str] = []
                 if any("input" in expr.lower() or "buf" in expr.lower() for expr in arg_exprs):
                     data_flow_tags.append("potential_external_input")
+                if is_indirect:
+                    data_flow_tags.append("indirect_call")
 
                 edges.append(FusedEdge(
                     caller=fn_name,
-                    callee=callee,
+                    callee=resolved_callee,
                     call_site_line=actual_line,
                     branch_context=branch_ctx,
                     lock_held=current_locks,
@@ -740,18 +1041,56 @@ class FusedGraphBuilder:
         for edge in self._graph.edges:
             adj[edge.caller].append(edge)
 
+        # 计算自适应深度
+        max_depth = self._compute_adaptive_depth(adj)
+        
+        # 检测递归函数 (自调用)
+        recursive_funcs: set[str] = set()
+        for caller, edges in adj.items():
+            for edge in edges:
+                if edge.callee == caller:
+                    recursive_funcs.add(caller)
+
         for entry in entry_points:
-            chains = self._dfs_call_chains(entry, adj, max_depth=10)
+            chains = self._dfs_call_chains(
+                entry, adj, max_depth=max_depth, 
+                recursive_funcs=recursive_funcs,
+                max_recursive_depth=3
+            )
             self._graph.call_chains.extend(chains)
+
+    def _compute_adaptive_depth(self, adj: dict[str, list[FusedEdge]]) -> int:
+        """根据图结构计算自适应的最大调用链深度
+        
+        算法: max_depth = min(max(max_out_degree * 2, 10), 25)
+        """
+        if not adj:
+            return 10
+        
+        max_out_degree = max(len(edges) for edges in adj.values()) if adj else 1
+        adaptive_depth = min(max(max_out_degree * 2, 10), 25)
+        
+        return adaptive_depth
 
     def _dfs_call_chains(
         self,
         start: str,
         adj: dict[str, list[FusedEdge]],
         max_depth: int,
+        recursive_funcs: set[str] | None = None,
+        max_recursive_depth: int = 3,
     ) -> list[CallChain]:
-        """DFS 构建调用链"""
+        """DFS 构建调用链
+        
+        Args:
+            start: 起始入口点函数名
+            adj: 邻接表
+            max_depth: 最大调用链深度
+            recursive_funcs: 递归函数集合
+            max_recursive_depth: 递归函数的最大递归深度
+        """
         chains: list[CallChain] = []
+        recursive_funcs = recursive_funcs or set()
 
         def dfs(
             current: str,
@@ -760,6 +1099,7 @@ class FusedGraphBuilder:
             locks_path: list[list[str]],
             protocol_seq: list[str],
             visited: set[str],
+            recursive_counts: dict[str, int],
         ) -> None:
             if len(path) > max_depth:
                 return
@@ -767,40 +1107,56 @@ class FusedGraphBuilder:
             edges = adj.get(current, [])
             if not edges or len(path) >= max_depth:
                 if len(path) > 1:
+                    entry_node = self._graph.nodes.get(start) if self._graph else None
+                    entry_type = entry_node.entry_point_type if entry_node else "none"
                     chains.append(CallChain(
-                        chain=list(path),
+                        functions=list(path),
                         entry_point=start,
-                        branch_path=list(branch_path),
-                        locks_held=list(locks_path),
+                        entry_type=entry_type,
+                        depth=len(path),
+                        branch_coverage=list(branch_path),
+                        lock_sequence=list(locks_path),
                         protocol_sequence=list(protocol_seq),
                     ))
                 return
 
             for edge in edges:
-                if edge.callee in visited:
+                callee = edge.callee
+                
+                # 对于递归函数，使用单独的递归深度限制
+                if callee in recursive_funcs:
+                    current_count = recursive_counts.get(callee, 0)
+                    if current_count >= max_recursive_depth:
+                        continue
+                    recursive_counts[callee] = current_count + 1
+                elif callee in visited:
                     continue
                 
-                callee_node = self._graph.nodes.get(edge.callee) if self._graph else None
+                callee_node = self._graph.nodes.get(callee) if self._graph else None
                 proto_ops = []
                 if callee_node:
                     proto_ops = [p.op_type for p in callee_node.protocol_ops]
 
-                visited.add(edge.callee)
-                path.append(edge.callee)
+                visited.add(callee)
+                path.append(callee)
                 branch_path.append(edge.branch_context)
                 locks_path.append(edge.lock_held)
                 protocol_seq.extend(proto_ops)
 
-                dfs(edge.callee, path, branch_path, locks_path, protocol_seq, visited)
+                dfs(callee, path, branch_path, locks_path, protocol_seq, visited, recursive_counts)
 
                 path.pop()
                 branch_path.pop()
                 locks_path.pop()
                 for _ in proto_ops:
                     protocol_seq.pop()
-                visited.discard(edge.callee)
+                visited.discard(callee)
+                
+                # 恢复递归计数
+                if callee in recursive_funcs:
+                    recursive_counts[callee] = recursive_counts.get(callee, 1) - 1
 
-        dfs(start, [start], [], [], [], {start})
+        dfs(start, [start], [], [], [], {start}, {})
         return chains
 
     def _extract_protocol_state_machine(self) -> None:
@@ -827,8 +1183,13 @@ class FusedGraphBuilder:
             "close": "CLOSING",
         }
 
-        for state in state_order:
-            states[state] = {"name": state, "functions": []}
+        for i, state in enumerate(state_order):
+            states[state] = {
+                "name": state,
+                "functions": [],
+                "is_initial": i == 0,
+                "is_error": False,
+            }
 
         for fn_name, op_type in proto_sequence:
             target_state = op_to_state.get(op_type)

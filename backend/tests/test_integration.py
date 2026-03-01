@@ -150,9 +150,14 @@ class TestCodeAnalysisFlow:
         assert response.status_code == 200
         
         data = response.json()
-        # Could be wrapped in envelope or direct list
+        # API wraps in envelope with code/data structure
+        # data["data"] contains {"analyses": [...], "total": N}
         if isinstance(data, dict) and "data" in data:
-            assert isinstance(data["data"], list)
+            inner = data["data"]
+            if isinstance(inner, dict) and "analyses" in inner:
+                assert isinstance(inner["analyses"], list)
+            else:
+                assert isinstance(inner, list)
         else:
             assert isinstance(data, list)
     

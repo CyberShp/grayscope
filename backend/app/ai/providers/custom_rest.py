@@ -33,6 +33,7 @@ class CustomRESTProvider(ModelProvider):
         chat_path: str = "/v1/chat/completions",
         health_path: str = "/health",
         response_content_key: str = "choices.0.message.content",
+        proxy: str | None = None,
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._api_key = api_key or ""
@@ -41,13 +42,14 @@ class CustomRESTProvider(ModelProvider):
         self._chat_path = chat_path
         self._health_path = health_path
         self._response_content_key = response_content_key
+        self._proxy = proxy
 
     def name(self) -> str:
         return "custom_rest"
 
     async def health_check(self) -> bool:
         try:
-            async with httpx.AsyncClient(timeout=10) as client:
+            async with httpx.AsyncClient(timeout=10, proxy=self._proxy) as client:
                 resp = await client.get(
                     f"{self._base_url}{self._health_path}",
                     headers=self._headers(),
@@ -72,7 +74,7 @@ class CustomRESTProvider(ModelProvider):
             "max_tokens": max_tokens,
             **kwargs,
         }
-        async with httpx.AsyncClient(timeout=self._timeout) as client:
+        async with httpx.AsyncClient(timeout=self._timeout, proxy=self._proxy) as client:
             resp = await client.post(
                 f"{self._base_url}{self._chat_path}",
                 json=payload,

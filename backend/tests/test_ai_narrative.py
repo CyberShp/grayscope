@@ -487,6 +487,8 @@ class TestAINarrativeService:
             params = []
             comments = []
             source = "void main() {}"
+            branches = []
+            lock_ops = []
         
         class MockEdge:
             caller = "main"
@@ -585,3 +587,207 @@ class TestEdgeCases:
             )
             
             assert "story" in result
+
+
+# ═══════════════════════════════════════════════════════════════════
+# 6. NEW FEATURE TESTS - Phase 3 (AI Reliability)
+# ═══════════════════════════════════════════════════════════════════
+
+class TestAIRetryMechanism:
+    """Tests for exponential backoff retry mechanism."""
+
+    @pytest.mark.asyncio
+    async def test_call_ai_retry_on_timeout(self):
+        """Retry on timeout with exponential backoff."""
+        from app.services.ai_narrative_service import _call_ai
+        import httpx
+        
+        call_count = 0
+        
+        async def mock_chat(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count < 3:
+                raise httpx.TimeoutException("timeout")
+            return {"content": '{"result": "success"}'}
+        
+        with patch("app.services.ai_narrative_service.get_provider") as mock_get:
+            mock_provider = MagicMock()
+            mock_provider.chat = mock_chat
+            mock_get.return_value = mock_provider
+            
+            result = await _call_ai(
+                "test", "model", "sys", "usr",
+                max_retries=3
+            )
+            
+            assert "result" in result
+            assert call_count == 3
+
+    @pytest.mark.asyncio
+    async def test_call_ai_retry_on_502(self):
+        """Retry on HTTP 502 status."""
+        from app.services.ai_narrative_service import _call_ai
+        import httpx
+        
+        call_count = 0
+        
+        async def mock_chat(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                response = httpx.Response(502)
+                raise httpx.HTTPStatusError("Bad Gateway", request=None, response=response)
+            return {"content": '{"ok": true}'}
+        
+        with patch("app.services.ai_narrative_service.get_provider") as mock_get:
+            mock_provider = MagicMock()
+            mock_provider.chat = mock_chat
+            mock_get.return_value = mock_provider
+            
+            result = await _call_ai("test", "model", "sys", "usr", max_retries=2)
+            
+            assert "ok" in result
+            assert call_count == 2
+
+
+class TestJSONFallbackLayers:
+    """Tests for multi-layer JSON extraction."""
+
+    def test_extract_json_direct(self):
+        """Layer 1: Direct JSON parsing."""
+        from app.services.ai_narrative_service import _extract_json_multilayer
+        
+        content = '{"name": "test", "value": 42}'
+        result = _extract_json_multilayer(content)
+        
+        assert result["name"] == "test"
+        assert result["value"] == 42
+
+    def test_extract_json_from_code_block(self):
+        """Layer 2: Extract from ```json code block."""
+        from app.services.ai_narrative_service import _extract_json_multilayer
+        
+        content = '''Here's the result:
+```json
+{"status": "ok"}
+```
+'''
+        result = _extract_json_multilayer(content)
+        
+        assert result["status"] == "ok"
+
+    def test_extract_json_regex_object(self):
+        """Layer 3: Regex extract outermost {...}."""
+        from app.services.ai_narrative_service import _extract_json_multilayer
+        
+        content = 'Some text before {"key": "value"} some text after'
+        result = _extract_json_multilayer(content)
+        
+        assert result["key"] == "value"
+
+    def test_extract_json_cleanup_trailing_comma(self):
+        """Layer 4: Handle trailing commas."""
+        from app.services.ai_narrative_service import _extract_json_multilayer
+        
+        content = '{"items": [1, 2, 3,]}'
+        result = _extract_json_multilayer(content)
+        
+        assert result["items"] == [1, 2, 3]
+
+    def test_extract_json_raw_fallback(self):
+        """Layer 5: Return raw content on failure."""
+        from app.services.ai_narrative_service import _extract_json_multilayer
+        
+        content = "This is not valid JSON at all"
+        result = _extract_json_multilayer(content)
+        
+        assert "raw_content" in result
+        assert result["raw_content"] == content
+
+
+class TestSmartTruncate:
+    """Tests for intelligent context truncation."""
+
+    def test_smart_truncate_preserves_signature(self):
+        """First line (function signature) is preserved."""
+        from app.services.ai_narrative_service import _smart_truncate
+        
+        source = """void my_function(int x, int y) {
+    int a = 1;
+    int b = 2;
+    int c = 3;
+    int d = 4;
+    int e = 5;
+    return;
+}"""
+        truncated = _smart_truncate(source, 100)
+        
+        assert truncated.startswith("void my_function(int x, int y)")
+
+    def test_smart_truncate_preserves_branches(self):
+        """Branch keywords (if/else/while) are preserved."""
+        from app.services.ai_narrative_service import _smart_truncate
+        
+        source = """void check(int x) {
+    int a = 0;
+    int b = 0;
+    if (x > 0) {
+        a = 1;
+    } else {
+        b = 1;
+    }
+    return;
+}"""
+        truncated = _smart_truncate(source, 150)
+        
+        assert "if (x > 0)" in truncated
+
+    def test_smart_truncate_preserves_locks(self):
+        """Lock operations are preserved."""
+        from app.services.ai_narrative_service import _smart_truncate
+        
+        source = """void critical(void) {
+    int setup = 0;
+    pthread_mutex_lock(&mutex);
+    int computation = 1;
+    int more_work = 2;
+    pthread_mutex_unlock(&mutex);
+    int cleanup = 0;
+}"""
+        truncated = _smart_truncate(source, 200)
+        
+        assert "pthread_mutex_lock" in truncated
+        assert "pthread_mutex_unlock" in truncated
+
+    def test_smart_truncate_adds_omission_marker(self):
+        """Omitted sections are marked."""
+        from app.services.ai_narrative_service import _smart_truncate
+        
+        source = "\n".join([f"    int line{i} = {i};" for i in range(100)])
+        source = "void big_func(void) {\n" + source + "\n}"
+        
+        truncated = _smart_truncate(source, 300)
+        
+        assert "omitted" in truncated.lower()
+
+    def test_smart_truncate_branch_factor(self):
+        """More branches = more context preserved."""
+        from app.services.ai_narrative_service import _smart_truncate
+        
+        source = "x" * 200
+        
+        # With no branches
+        truncated1 = _smart_truncate(source, 100, branches=[])
+        
+        # With many branches
+        truncated2 = _smart_truncate(source, 100, branches=[
+            {"type": "if", "condition": "a"},
+            {"type": "if", "condition": "b"},
+            {"type": "if", "condition": "c"},
+            {"type": "if", "condition": "d"},
+            {"type": "if", "condition": "e"},
+        ])
+        
+        # More branches should allow more content
+        assert len(truncated2) >= len(truncated1)

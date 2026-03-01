@@ -80,15 +80,28 @@ def _safe_setattr(obj: object, attr: str, value: object) -> bool:
         return False
 
 
+@router.get("/models/defaults")
+def get_model_defaults() -> dict:
+    """获取默认 AI 配置（provider、model、proxy）。"""
+    return ok({
+        "default_provider": settings.default_provider,
+        "default_model": settings.default_model,
+        "ai_proxy": settings.ai_proxy,
+    })
+
+
 @router.post("/models/config")
 def update_model_config(body: dict) -> dict:
-    """更新 AI 模型配置（API key、base_url 等）。
+    """更新 AI 模型配置（API key、base_url、proxy、default_provider、default_model 等）。
 
     仅更新内存中的 settings 对象；持久化需写入 .env 文件。
     """
     provider = body.get("provider")
     api_key = body.get("api_key")
     base_url = body.get("base_url")
+    proxy = body.get("proxy")
+    default_provider = body.get("default_provider")
+    default_model = body.get("default_model")
 
     if not provider:
         return error("INVALID_REQUEST", "provider 字段必填")
@@ -109,15 +122,33 @@ def update_model_config(body: dict) -> dict:
                 changed.append(attr)
         from app.ai.provider_registry import clear_cache
         clear_cache()
+    if proxy is not None:
+        if _safe_setattr(settings, "ai_proxy", proxy if proxy else None):
+            changed.append("ai_proxy")
+        from app.ai.provider_registry import clear_cache
+        clear_cache()
+    if default_provider is not None:
+        if _safe_setattr(settings, "default_provider", default_provider):
+            changed.append("default_provider")
+    if default_model is not None:
+        if _safe_setattr(settings, "default_model", default_model):
+            changed.append("default_model")
 
     # 持久化到 .env 文件
     if changed:
-        _persist_env(provider, api_key, base_url)
+        _persist_env(provider, api_key, base_url, proxy, default_provider, default_model)
 
     return ok({"updated": changed})
 
 
-def _persist_env(provider: str, api_key: str | None, base_url: str | None) -> None:
+def _persist_env(
+    provider: str,
+    api_key: str | None,
+    base_url: str | None,
+    proxy: str | None = None,
+    default_provider: str | None = None,
+    default_model: str | None = None,
+) -> None:
     """将 AI 配置追加/更新到 .env 文件。"""
     from pathlib import Path
     # backend/ is 4 levels up from app/api/v1/models_api.py
@@ -138,6 +169,12 @@ def _persist_env(provider: str, api_key: str | None, base_url: str | None) -> No
         _set(f"{prefix}_API_KEY", api_key)
     if base_url is not None:
         _set(f"{prefix}_BASE_URL", base_url)
+    if proxy is not None:
+        _set("GS_AI_PROXY", proxy)
+    if default_provider is not None:
+        _set("GS_DEFAULT_PROVIDER", default_provider)
+    if default_model is not None:
+        _set("GS_DEFAULT_MODEL", default_model)
 
     env_path.write_text("\n".join(lines) + "\n")
 

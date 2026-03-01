@@ -43,7 +43,9 @@ class TestTaskCleanup:
         # List tasks
         response = client.get("/api/v1/code-analysis")
         data = response.json()
-        tasks = data.get("data", data) if isinstance(data, dict) else data
+        # API returns {"code": "OK", "data": {"analyses": [...], "total": N}}
+        inner = data.get("data", data) if isinstance(data, dict) else data
+        tasks = inner.get("analyses", inner) if isinstance(inner, dict) else inner
         
         if tasks and len(tasks) > 0:
             task_id = tasks[0].get("analysis_id") or tasks[0].get("id")
@@ -53,9 +55,12 @@ class TestTaskCleanup:
     
     def test_old_tasks_dont_accumulate(self, client):
         """Tasks list has reasonable limit."""
-        response = client.get("/api/v1/code-analysis?limit=1000")
+        # Use valid limit (max is 100)
+        response = client.get("/api/v1/code-analysis?limit=100")
         data = response.json()
-        tasks = data.get("data", data) if isinstance(data, dict) else data
+        # API returns {"code": "OK", "data": {"analyses": [...], "total": N}}
+        inner = data.get("data", data) if isinstance(data, dict) else data
+        tasks = inner.get("analyses", inner) if isinstance(inner, dict) else inner
         
         # Even if we don't enforce cleanup, should have reasonable count
         assert isinstance(tasks, list)
@@ -98,7 +103,7 @@ class TestAIFailureGraceful:
         except ImportError:
             pytest.skip("AINarrativeService not available")
         
-        service = AINarrativeService(provider="deepseek", model="test")
+        service = AINarrativeService({"provider": "deepseek", "model": "test"})
         
         # With no API key, should handle error gracefully
         # Just verify initialization doesn't crash
@@ -165,15 +170,24 @@ class TestConcurrentAnalysisIsolation:
     def test_separate_graphs_dont_share_state(self):
         """Each FusedGraph instance is independent."""
         try:
-            from app.analyzers.fused_graph_builder import FusedGraph
+            from app.analyzers.fused_graph_builder import FusedGraph, FusedNode
         except ImportError:
             pytest.skip("FusedGraph not available")
         
-        graph1 = FusedGraph()
-        graph2 = FusedGraph()
+        # Create mock nodes
+        node_a = FusedNode(
+            name="func_a", file_path="a.c", line_start=1, line_end=1,
+            source="", params=[], comments=[], branches=[], lock_ops=[],
+            shared_var_access=[], protocol_ops=[], is_entry_point=False, entry_point_type="none"
+        )
+        node_b = FusedNode(
+            name="func_b", file_path="b.c", line_start=1, line_end=1,
+            source="", params=[], comments=[], branches=[], lock_ops=[],
+            shared_var_access=[], protocol_ops=[], is_entry_point=False, entry_point_type="none"
+        )
         
-        graph1.add_node("func_a", {"type": "function"})
-        graph2.add_node("func_b", {"type": "function"})
+        graph1 = FusedGraph(nodes={"func_a": node_a}, edges=[], call_chains=[], global_vars=set(), protocol_state_machine={})
+        graph2 = FusedGraph(nodes={"func_b": node_b}, edges=[], call_chains=[], global_vars=set(), protocol_state_machine={})
         
         # Graphs should be independent
         assert "func_a" in graph1.nodes
@@ -195,11 +209,11 @@ class TestConcurrentAnalysisIsolation:
             Path(tmp1, "a.c").write_text("int a() { return 1; }")
             Path(tmp2, "b.c").write_text("int b() { return 2; }")
             
-            builder1 = FusedGraphBuilder(tmp1)
-            builder2 = FusedGraphBuilder(tmp2)
+            builder1 = FusedGraphBuilder()
+            builder2 = FusedGraphBuilder()
             
-            graph1 = builder1.build()
-            graph2 = builder2.build()
+            graph1 = builder1.build(tmp1)
+            graph2 = builder2.build(tmp2)
             
             # Results should be independent
             assert graph1 is not graph2
@@ -220,8 +234,8 @@ class TestEmptyEdgeCases:
             pytest.skip("FusedGraphBuilder not available")
         
         with tempfile.TemporaryDirectory() as tmpdir:
-            builder = FusedGraphBuilder(tmpdir)
-            graph = builder.build()
+            builder = FusedGraphBuilder()
+            graph = builder.build(tmpdir)
             
             assert graph is not None
             assert len(graph.nodes) == 0
@@ -238,8 +252,8 @@ class TestEmptyEdgeCases:
             Path(tmpdir, "readme.md").write_text("# README")
             Path(tmpdir, "config.json").write_text("{}")
             
-            builder = FusedGraphBuilder(tmpdir)
-            graph = builder.build()
+            builder = FusedGraphBuilder()
+            graph = builder.build(tmpdir)
             
             assert graph is not None
     
@@ -251,7 +265,7 @@ class TestEmptyEdgeCases:
         except ImportError:
             pytest.skip("FusedRiskAnalyzer not available")
         
-        graph = FusedGraph()
+        graph = FusedGraph(nodes={}, edges=[], call_chains=[], global_vars=set(), protocol_state_machine={})
         analyzer = FusedRiskAnalyzer(graph)
         
         risks = analyzer.analyze()
@@ -282,8 +296,8 @@ class TestBinaryFileSkipping:
             c_path = Path(tmpdir, "valid.c")
             c_path.write_text("int main() { return 0; }")
             
-            builder = FusedGraphBuilder(tmpdir)
-            graph = builder.build()
+            builder = FusedGraphBuilder()
+            graph = builder.build(tmpdir)
             
             # Should not crash, should parse the valid file
             assert graph is not None
@@ -300,11 +314,11 @@ class TestBinaryFileSkipping:
             fake_c = Path(tmpdir, "image.c")
             fake_c.write_bytes(b'\x89PNG\r\n\x1a\n' + b'\x00' * 100)
             
-            builder = FusedGraphBuilder(tmpdir)
+            builder = FusedGraphBuilder()
             
             # Should not crash
             try:
-                graph = builder.build()
+                graph = builder.build(tmpdir)
                 assert graph is not None
             except UnicodeDecodeError:
                 # Acceptable to fail on decode, but shouldn't crash
@@ -330,8 +344,8 @@ class TestUnicodeHandling:
             unicode_path = Path(tmpdir, "测试文件.c")
             unicode_path.write_text("int main() { return 0; }")
             
-            builder = FusedGraphBuilder(tmpdir)
-            graph = builder.build()
+            builder = FusedGraphBuilder()
+            graph = builder.build(tmpdir)
             
             assert graph is not None
     
@@ -356,8 +370,8 @@ int main() {
 }
 ''')
             
-            builder = FusedGraphBuilder(tmpdir)
-            graph = builder.build()
+            builder = FusedGraphBuilder()
+            graph = builder.build(tmpdir)
             
             assert graph is not None
 
@@ -382,8 +396,8 @@ class TestMaxLimitsEnforcement:
                 Path(tmpdir, f"file_{i}.c").write_text(f"int func_{i}() {{ return {i}; }}")
             
             # Build with limit
-            builder = FusedGraphBuilder(tmpdir, max_files=50)
-            graph = builder.build()
+            builder = FusedGraphBuilder()
+            graph = builder.build(tmpdir, max_files=50)
             
             # Should have limited nodes
             assert graph is not None

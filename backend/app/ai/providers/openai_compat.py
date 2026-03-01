@@ -19,18 +19,20 @@ class OpenAICompatProvider(ModelProvider):
         api_key: str | None = None,
         default_model: str = "default",
         timeout: float = 120,
+        proxy: str | None = None,
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._api_key = api_key or ""
         self._default_model = default_model
         self._timeout = timeout
+        self._proxy = proxy
 
     def name(self) -> str:
         return "openai_compat"
 
     async def health_check(self) -> bool:
         try:
-            async with httpx.AsyncClient(timeout=10) as client:
+            async with httpx.AsyncClient(timeout=10, proxy=self._proxy) as client:
                 resp = await client.get(f"{self._base_url}/v1/models", headers=self._headers())
                 return resp.status_code == 200
         except Exception:
@@ -52,7 +54,7 @@ class OpenAICompatProvider(ModelProvider):
             "max_tokens": max_tokens,
             **kwargs,
         }
-        async with httpx.AsyncClient(timeout=self._timeout) as client:
+        async with httpx.AsyncClient(timeout=self._timeout, proxy=self._proxy) as client:
             resp = await client.post(
                 f"{self._base_url}/v1/chat/completions",
                 json=payload,
