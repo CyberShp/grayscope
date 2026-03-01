@@ -124,6 +124,54 @@ def _migrate_test_run_name_docker():
                 logger.warning("test_runs migration %s: %s", col, e)
 
 
+def _migrate_code_analysis_bridge():
+    """CodeAnalysisTask 增加 bridge_task_id 列（关联桥接 AnalysisTask）。"""
+    from sqlalchemy import text
+    try:
+        with engine.connect() as conn:
+            conn.execute(text(
+                "ALTER TABLE code_analysis_tasks ADD COLUMN bridge_task_id BIGINT"
+            ))
+            conn.commit()
+        logger.info("code_analysis_tasks: added column bridge_task_id")
+    except Exception as e:
+        if "duplicate" in str(e).lower() or "already exists" in str(e).lower():
+            pass
+        else:
+            logger.warning("code_analysis_tasks migration bridge_task_id: %s", e)
+
+
+def _cleanup_orphan_code_analysis_tasks():
+    """Mark orphan 'running' code analysis tasks as 'failed' on startup.
+    
+    Tasks stuck in 'running' status but not in _running_services are orphans
+    from a previous server instance. Mark them as failed with a descriptive error.
+    """
+    from datetime import datetime, timezone, timedelta
+    from app.models.code_analysis_task import CodeAnalysisTask
+    try:
+        with SessionLocal() as db:
+            # Find tasks stuck as "running" for > 2 hours (likely orphans)
+            cutoff = datetime.now(timezone.utc) - timedelta(hours=2)
+            orphans = (
+                db.query(CodeAnalysisTask)
+                .filter(
+                    CodeAnalysisTask.status == "running",
+                    CodeAnalysisTask.started_at < cutoff,
+                )
+                .all()
+            )
+            for task in orphans:
+                task.status = "failed"
+                task.error = "任务因服务重启而中断"
+                task.completed_at = datetime.now(timezone.utc).isoformat()
+            if orphans:
+                db.commit()
+                logger.info(f"Cleaned up {len(orphans)} orphan code analysis tasks")
+    except Exception as e:
+        logger.warning("Failed to cleanup orphan code analysis tasks: %s", e)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # 启动：创建数据库表（开发便利；生产环境使用 Alembic）
@@ -133,6 +181,8 @@ async def lifespan(app: FastAPI):
     _migrate_v2_columns()
     _migrate_test_run_and_execution()
     _migrate_test_run_name_docker()
+    _migrate_code_analysis_bridge()
+    _cleanup_orphan_code_analysis_tasks()
     logger.info("数据库表已就绪")
     yield
     # 关闭

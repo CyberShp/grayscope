@@ -18,6 +18,7 @@ Covers all 14 endpoints:
 - GET /code-analysis/
 """
 
+import json
 import tempfile
 import uuid
 from pathlib import Path
@@ -28,6 +29,9 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.api.v1 import code_analysis_api
+from app.core.database import SessionLocal
+from app.models.code_analysis_task import CodeAnalysisTask
+from app.repositories import code_analysis_repo
 
 client = TestClient(app)
 
@@ -35,9 +39,16 @@ client = TestClient(app)
 @pytest.fixture(autouse=True)
 def clear_tasks():
     """Clear analysis tasks before and after each test."""
-    code_analysis_api._analysis_tasks.clear()
+    code_analysis_api._running_services.clear()
+    # Clear code_analysis_tasks from the main DB (which the API uses)
+    with SessionLocal() as db:
+        db.query(CodeAnalysisTask).delete()
+        db.commit()
     yield
-    code_analysis_api._analysis_tasks.clear()
+    code_analysis_api._running_services.clear()
+    with SessionLocal() as db:
+        db.query(CodeAnalysisTask).delete()
+        db.commit()
 
 
 @pytest.fixture
@@ -116,15 +127,31 @@ def mock_analysis_result():
 
 
 def _insert_mock_task(analysis_id, status, result=None, error=None, workspace_path="/tmp"):
-    """Helper to insert a mock task into storage."""
-    code_analysis_api._analysis_tasks[analysis_id] = {
-        "status": status,
-        "started_at": "2024-01-01T00:00:00",
-        "completed_at": "2024-01-01T00:01:00" if status != "running" else None,
-        "result": result,
-        "error": error,
-        "workspace_path": workspace_path,
-    }
+    """Helper to insert a mock task into the main database (same DB as API)."""
+    result_json = None
+    progress_json = None
+    if result:
+        result_dict = result.to_dict()
+        result_json = json.dumps(result_dict, ensure_ascii=False, default=str)
+        progress_json = json.dumps(result.progress.to_dict(), ensure_ascii=False, default=str)
+    
+    # Use main SessionLocal (same as API)
+    with SessionLocal() as db:
+        task = CodeAnalysisTask(
+            analysis_id=analysis_id,
+            status=status,
+            workspace_path=workspace_path,
+            project_id=None,
+            repo_id=None,
+            enable_ai=False,
+            started_at="2024-01-01T00:00:00",
+            completed_at="2024-01-01T00:01:00" if status != "running" else None,
+            error=error,
+            result_json=result_json,
+            progress_json=progress_json,
+        )
+        db.add(task)
+        db.commit()
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -158,7 +185,7 @@ class TestStartAnalysis:
         assert response.status_code == 400
 
     def test_start_analysis_creates_task(self, temp_workspace):
-        """Task is created in storage."""
+        """Task is created and accessible via API."""
         response = client.post("/api/v1/code-analysis/start", json={
             "workspace_path": temp_workspace,
             "enable_ai": False,
@@ -167,11 +194,13 @@ class TestStartAnalysis:
         data = response.json()
         analysis_id = data["data"]["analysis_id"]
         
-        assert analysis_id in code_analysis_api._analysis_tasks
-        task = code_analysis_api._analysis_tasks[analysis_id]
+        # Verify task is accessible via status endpoint
+        status_response = client.get(f"/api/v1/code-analysis/{analysis_id}/status")
+        assert status_response.status_code == 200
+        status_data = status_response.json()["data"]
         # Status may be "running" or "completed" depending on how fast the task finishes
-        assert task["status"] in ("running", "completed")
-        assert task["workspace_path"] == temp_workspace
+        assert status_data["status"] in ("running", "completed")
+        assert status_data["analysis_id"] == analysis_id
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -491,7 +520,9 @@ class TestDeleteAnalysis:
         response = client.delete(f"/api/v1/code-analysis/{analysis_id}")
         
         assert response.status_code == 200
-        assert analysis_id not in code_analysis_api._analysis_tasks
+        # Verify task is gone via status endpoint (should return 404)
+        status_response = client.get(f"/api/v1/code-analysis/{analysis_id}/status")
+        assert status_response.status_code == 404
 
     def test_delete_and_get_404(self, mock_analysis_result):
         """Deleted task returns 404 on get."""

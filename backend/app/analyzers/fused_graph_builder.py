@@ -720,8 +720,13 @@ class FusedGraphBuilder:
         """提取共享变量访问"""
         accesses: list[SharedAccess] = []
         
-        if not self._graph:
+        if not self._graph or not self._graph.global_vars:
             return accesses
+
+        # Pre-compile combined regex patterns for all global vars (O(1) per line vs O(N))
+        gv_names = "|".join(re.escape(gv) for gv in self._graph.global_vars)
+        write_re = re.compile(rf"\b({gv_names})\s*(?:=(?!=)|[+\-*/&|^]=|\+\+|--)")
+        read_re = re.compile(rf"\b({gv_names})\b")
 
         lines = source.split("\n")
         for line_idx, line in enumerate(lines):
@@ -734,17 +739,21 @@ class FusedGraphBuilder:
                 else:
                     break
 
-            for gv in self._graph.global_vars:
-                # 写访问
-                if re.search(rf"\b{re.escape(gv)}\s*(?:=(?!=)|[+\-*/&|^]=|\+\+|--)", line):
-                    accesses.append(SharedAccess(
-                        var_name=gv,
-                        access="write",
-                        line=actual_line,
-                        lock_held=list(held_locks),
-                    ))
-                # 读访问
-                elif re.search(rf"\b{re.escape(gv)}\b", line):
+            # Check for write access
+            write_matches = write_re.findall(line)
+            for gv in write_matches:
+                accesses.append(SharedAccess(
+                    var_name=gv,
+                    access="write",
+                    line=actual_line,
+                    lock_held=list(held_locks),
+                ))
+            
+            # Check for read access (excluding already-matched writes)
+            written_vars = set(write_matches)
+            read_matches = read_re.findall(line)
+            for gv in read_matches:
+                if gv not in written_vars:
                     accesses.append(SharedAccess(
                         var_name=gv,
                         access="read",
@@ -1004,26 +1013,25 @@ class FusedGraphBuilder:
         return args
 
     def _identify_entry_points(self) -> None:
-        """识别入口点（基于入度为0或命名模式）"""
+        """识别入口点（基于入度为0或命名模式）
+        
+        函数已被 _build_node() 基于命名模式标记为入口点。
+        这里只补充识别入度为0的函数作为潜在入口点。
+        """
         if not self._graph:
             return
 
-        # 计算入度
+        # 计算入度（被调用的函数集合）
         callee_set: set[str] = set()
         for edge in self._graph.edges:
             callee_set.add(edge.callee)
 
-        # 入度为0的函数可能是入口点
+        # 入度为0的函数可能是入口点（未被任何函数调用）
         for name, node in self._graph.nodes.items():
             if not node.is_entry_point and name not in callee_set:
-                # 检查是否被 main 或线程创建函数引用
-                for edge in self._graph.edges:
-                    if edge.callee == name:
-                        caller_node = self._graph.nodes.get(edge.caller)
-                        if caller_node and caller_node.entry_point_type == "main":
-                            node.is_entry_point = True
-                            node.entry_point_type = "called_from_main"
-                            break
+                # 入度为0且未被标记，可能是外部入口
+                node.is_entry_point = True
+                node.entry_point_type = "unreferenced"
 
     def _build_call_chains(self) -> None:
         """构建调用链"""

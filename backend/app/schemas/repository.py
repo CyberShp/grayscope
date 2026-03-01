@@ -21,6 +21,7 @@ class RepoOut(BaseModel):
     name: str
     git_url: str
     default_branch: str
+    local_mirror_path: Optional[str] = None
     last_sync_status: str = "never"
     last_sync_at: Optional[datetime] = None
     auth_type: Optional[str] = None
@@ -36,6 +37,7 @@ class RepoOut(BaseModel):
             name=obj.name,
             git_url=obj.git_url,
             default_branch=obj.default_branch,
+            local_mirror_path=getattr(obj, "local_mirror_path", None),
             last_sync_status=obj.last_sync_status,
             last_sync_at=obj.last_sync_at,
             auth_type=getattr(obj, "auth_type", None),

@@ -15,7 +15,8 @@
       <span class="gs-cg-legend-item"><span class="gs-cg-dot" style="background:#E57F00"></span>有风险</span>
       <span class="gs-cg-legend-item"><span class="gs-cg-dot" style="background:#9C27B0"></span>有锁操作</span>
     </div>
-    <v-chart :option="chartOption" style="height:500px;width:100%" autoresize ref="chartRef" />
+    <el-empty v-if="filteredNodes.length === 0" description="没有符合筛选条件的函数" style="height:300px" />
+    <v-chart v-else :option="chartOption" style="height:500px;width:100%" autoresize ref="chartRef" />
     <div class="gs-cg-stats">
       <el-tag type="info">函数: {{ data.nodes?.length || 0 }}</el-tag>
       <el-tag type="info">调用关系: {{ data.edges?.length || 0 }}</el-tag>
@@ -44,6 +45,10 @@ const chartRef = ref(null)
 
 const entryCount = computed(() => 
   (props.data.nodes || []).filter(n => n.isEntryPoint).length
+)
+
+const initialLayout = computed(() => 
+  (props.data.nodes?.length || 0) > 30 ? 'circular' : 'force'
 )
 
 const filteredNodes = computed(() => {
@@ -134,7 +139,7 @@ const chartOption = computed(() => {
     },
     series: [{
       type: 'graph',
-      layout: filteredNodes.value.length > 30 ? 'circular' : 'force',
+      layout: initialLayout.value,
       roam: true,
       draggable: true,
       force: { repulsion: 400, gravity: 0.1, edgeLength: [100, 200] },

@@ -59,6 +59,6 @@ class AnalysisTask(TimestampMixin, Base):
         "failed",
         "cancelled",
     }
-    VALID_TASK_TYPES = {"full", "file", "function", "diff", "postmortem"}
+    VALID_TASK_TYPES = {"full", "file", "function", "diff", "postmortem", "code_analysis"}
     RETRYABLE_STATUSES = {"failed", "partial_failed", "success"}
     CANCELLABLE_STATUSES = {"pending", "running"}

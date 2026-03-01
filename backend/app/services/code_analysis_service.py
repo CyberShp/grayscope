@@ -23,12 +23,20 @@ from typing import Any
 from app.analyzers.fused_graph_builder import FusedGraph, FusedGraphBuilder
 from app.analyzers.fused_risk_analyzer import FusedRiskAnalyzer
 from app.services.ai_narrative_service import AINarrativeService
+from app.utils.data import flatten_list as _flatten_list
 
 logger = logging.getLogger(__name__)
 
 
 class AnalysisProgress:
-    """Tracks analysis progress for UI updates."""
+    """Tracks analysis progress for UI updates.
+    
+    增强版本特性:
+    - elapsed_seconds: 已用时间
+    - estimated_remaining: 基于已完成步骤耗时估算剩余时间
+    - duration_ms: 每个步骤的实际耗时
+    - sub_progress: 子步骤级别的进度追踪
+    """
     
     def __init__(self) -> None:
         self.steps: list[dict[str, Any]] = []
@@ -37,41 +45,148 @@ class AnalysisProgress:
         self.started_at: datetime = datetime.now()
         self.completed_at: datetime | None = None
         self.error: str | None = None
+        self._sub_progress: dict[str, dict[str, int]] = {}  # step_name -> {completed, total}
     
-    def start_step(self, step_name: str, weight: int = 10) -> None:
+    def start_step(self, step_name: str, weight: int = 10, is_sub_step: bool = False, parent_step: str | None = None) -> None:
+        """开始一个步骤.
+        
+        Args:
+            step_name: 步骤名称
+            weight: 权重（用于计算总进度百分比）
+            is_sub_step: 是否为子步骤
+            parent_step: 父步骤名称（仅子步骤需要）
+        """
         self.current_step = step_name
-        self.steps.append({
+        step_data = {
             "name": step_name,
             "status": "running",
             "started_at": datetime.now().isoformat(),
             "weight": weight,
-        })
+            "is_sub_step": is_sub_step,
+        }
+        if parent_step:
+            step_data["parent_step"] = parent_step
+        self.steps.append(step_data)
         logger.info(f"Analysis step started: {step_name}")
     
     def complete_step(self, step_name: str) -> None:
+        """完成一个步骤."""
+        now = datetime.now()
         for step in self.steps:
             if step["name"] == step_name:
                 step["status"] = "completed"
-                step["completed_at"] = datetime.now().isoformat()
+                step["completed_at"] = now.isoformat()
+                # 计算 duration_ms
+                try:
+                    started = datetime.fromisoformat(step["started_at"])
+                    step["duration_ms"] = int((now - started).total_seconds() * 1000)
+                except (KeyError, ValueError):
+                    step["duration_ms"] = 0
                 break
-        completed_weight = sum(
-            s["weight"] for s in self.steps if s["status"] == "completed"
-        )
-        total_weight = sum(s["weight"] for s in self.steps)
-        if total_weight > 0:
-            self.progress_percent = int((completed_weight / total_weight) * 100)
+        
+        self._update_progress_percent()
         logger.info(f"Analysis step completed: {step_name} ({self.progress_percent}%)")
     
     def fail_step(self, step_name: str, error: str) -> None:
+        """标记步骤失败."""
+        now = datetime.now()
         for step in self.steps:
             if step["name"] == step_name:
                 step["status"] = "failed"
                 step["error"] = error
+                step["completed_at"] = now.isoformat()
+                try:
+                    started = datetime.fromisoformat(step["started_at"])
+                    step["duration_ms"] = int((now - started).total_seconds() * 1000)
+                except (KeyError, ValueError):
+                    step["duration_ms"] = 0
                 break
         self.error = error
         logger.error(f"Analysis step failed: {step_name} - {error}")
     
+    def update_sub_progress(self, step_name: str, completed: int, total: int) -> None:
+        """更新步骤的子进度.
+        
+        用于追踪批量操作的进度，如 "函数字典 3/5 批次"。
+        """
+        self._sub_progress[step_name] = {"completed": completed, "total": total}
+        
+        # 更新对应步骤的 sub_progress 字段
+        for step in self.steps:
+            if step["name"] == step_name:
+                step["sub_progress"] = {"completed": completed, "total": total}
+                break
+        
+        # 重新计算总进度
+        self._update_progress_percent()
+    
+    def _update_progress_percent(self) -> None:
+        """重新计算总进度百分比.
+        
+        考虑:
+        1. 已完成步骤的完整权重
+        2. 正在运行步骤的部分权重（基于 sub_progress）
+        """
+        completed_weight = 0.0
+        total_weight = sum(s["weight"] for s in self.steps)
+        
+        for step in self.steps:
+            if step["status"] == "completed":
+                completed_weight += step["weight"]
+            elif step["status"] == "running":
+                # 如果有子进度，按比例计算部分权重
+                sub = step.get("sub_progress")
+                if sub and sub["total"] > 0:
+                    ratio = sub["completed"] / sub["total"]
+                    completed_weight += step["weight"] * ratio
+        
+        if total_weight > 0:
+            self.progress_percent = int((completed_weight / total_weight) * 100)
+    
+    @property
+    def elapsed_seconds(self) -> float:
+        """已用时间（秒）."""
+        if self.completed_at:
+            return (self.completed_at - self.started_at).total_seconds()
+        return (datetime.now() - self.started_at).total_seconds()
+    
+    @property
+    def estimated_remaining(self) -> float | None:
+        """估算剩余时间（秒）.
+        
+        基于已完成步骤的加权平均耗时推算。
+        """
+        completed_steps = [s for s in self.steps if s["status"] == "completed" and s.get("duration_ms")]
+        if not completed_steps:
+            return None
+        
+        # 计算加权平均耗时
+        total_duration_ms = sum(s["duration_ms"] for s in completed_steps)
+        total_completed_weight = sum(s["weight"] for s in completed_steps)
+        
+        if total_completed_weight == 0:
+            return None
+        
+        avg_ms_per_weight = total_duration_ms / total_completed_weight
+        
+        # 计算剩余权重
+        remaining_weight = 0
+        for step in self.steps:
+            if step["status"] == "pending":
+                remaining_weight += step["weight"]
+            elif step["status"] == "running":
+                # 正在运行的步骤，考虑子进度
+                sub = step.get("sub_progress")
+                if sub and sub["total"] > 0:
+                    remaining_ratio = 1 - (sub["completed"] / sub["total"])
+                    remaining_weight += step["weight"] * remaining_ratio
+                else:
+                    remaining_weight += step["weight"]
+        
+        return (avg_ms_per_weight * remaining_weight) / 1000
+    
     def to_dict(self) -> dict[str, Any]:
+        """转换为字典用于 API 响应."""
         return {
             "steps": self.steps,
             "current_step": self.current_step,
@@ -79,6 +194,8 @@ class AnalysisProgress:
             "started_at": self.started_at.isoformat(),
             "completed_at": self.completed_at.isoformat() if self.completed_at else None,
             "error": self.error,
+            "elapsed_seconds": round(self.elapsed_seconds, 1),
+            "estimated_remaining": round(self.estimated_remaining, 1) if self.estimated_remaining else None,
         }
 
 
@@ -178,7 +295,19 @@ class CodeAnalysisService:
         enable_ai: bool = True,
         max_files: int = 500,
     ) -> AnalysisResult:
-        """Run complete analysis pipeline."""
+        """Run complete analysis pipeline.
+        
+        步骤权重分配:
+        - 构建融合图: 30
+        - 跨维度风险分析: 20
+        - AI 叙事生成 (5 个子步骤): 40
+          - AI: 调用链叙事: 10
+          - AI: 函数字典: 10
+          - AI: 风险卡片: 8
+          - AI: What-If场景: 6
+          - AI: 测试矩阵: 6
+        - 协议状态机提取: 10
+        """
         try:
             # Step 1: Build fused graph
             self.result.progress.start_step("构建融合图", weight=30)
@@ -190,11 +319,9 @@ class CodeAnalysisService:
             await self._analyze_risks()
             self.result.progress.complete_step("跨维度风险分析")
             
-            # Step 3: AI narratives (if enabled)
+            # Step 3: AI narratives (if enabled) - 拆分为 5 个子步骤
             if enable_ai and self.ai_config:
-                self.result.progress.start_step("AI 叙事生成", weight=40)
-                await self._generate_narratives()
-                self.result.progress.complete_step("AI 叙事生成")
+                await self._generate_narratives_with_substeps()
             
             # Step 4: Extract protocol state machine
             self.result.progress.start_step("协议状态机提取", weight=10)
@@ -213,9 +340,8 @@ class CodeAnalysisService:
     async def _build_fused_graph(self, max_files: int) -> None:
         """Build the fused graph from source code."""
         builder = FusedGraphBuilder()
-        loop = asyncio.get_event_loop()
-        self.result.fused_graph = await loop.run_in_executor(
-            None, builder.build, self.workspace_path, max_files
+        self.result.fused_graph = await asyncio.to_thread(
+            builder.build, self.workspace_path, max_files
         )
     
     async def _analyze_risks(self) -> None:
@@ -224,15 +350,14 @@ class CodeAnalysisService:
             return
         
         analyzer = FusedRiskAnalyzer(self.result.fused_graph)
-        loop = asyncio.get_event_loop()
-        analysis_result = await loop.run_in_executor(None, analyzer.analyze)
+        analysis_result = await asyncio.to_thread(analyzer.analyze)
         
         self.result.risk_findings = analysis_result.get("findings", [])
         self.result.comment_issues = analysis_result.get("comment_issues", [])
         self.result.risk_summary = analysis_result.get("summary", {})
     
     async def _generate_narratives(self) -> None:
-        """Generate AI narratives from analysis results."""
+        """Generate AI narratives from analysis results (without sub-step tracking)."""
         if not self.result.fused_graph:
             return
         
@@ -241,6 +366,101 @@ class CodeAnalysisService:
             self.result.fused_graph,
             self.result.risk_findings,
         )
+    
+    async def _generate_narratives_with_substeps(self) -> None:
+        """Generate AI narratives with detailed sub-step progress tracking.
+        
+        将 AI 叙事生成拆分为 5 个子步骤:
+        1. AI: 调用链叙事 (weight=10)
+        2. AI: 函数字典 (weight=10)
+        3. AI: 风险卡片 (weight=8)
+        4. AI: What-If场景 (weight=6)
+        5. AI: 测试矩阵 (weight=6)
+        """
+        if not self.result.fused_graph:
+            return
+        
+        # 子步骤配置
+        substeps = [
+            ("AI: 调用链叙事", 10, "flow_narratives"),
+            ("AI: 函数字典", 10, "function_dictionary"),
+            ("AI: 风险卡片", 8, "risk_cards"),
+            ("AI: What-If场景", 6, "what_if_scenarios"),
+            ("AI: 测试矩阵", 6, "test_matrix"),
+        ]
+        
+        # 注册所有子步骤（状态为 pending）
+        for step_name, weight, _ in substeps:
+            self.result.progress.steps.append({
+                "name": step_name,
+                "status": "pending",
+                "weight": weight,
+                "is_sub_step": True,
+                "parent_step": "AI 叙事生成",
+            })
+        
+        # 追踪当前完成的子步骤
+        completed_substeps: set[str] = set()
+        
+        def on_progress(step_key: str, completed: int, total: int) -> None:
+            """进度回调: 由 AINarrativeService 调用."""
+            # 映射 step_key 到子步骤名称
+            step_mapping = {
+                "flow_narratives": "AI: 调用链叙事",
+                "function_dictionary": "AI: 函数字典",
+                "risk_cards": "AI: 风险卡片",
+                "what_if_scenarios": "AI: What-If场景",
+                "test_matrix": "AI: 测试矩阵",
+            }
+            step_name = step_mapping.get(step_key)
+            if not step_name:
+                return
+            
+            # 更新步骤状态
+            for step in self.result.progress.steps:
+                if step["name"] == step_name:
+                    if step["status"] == "pending":
+                        # 首次进度更新 -> running
+                        step["status"] = "running"
+                        step["started_at"] = datetime.now().isoformat()
+                        self.result.progress.current_step = step_name
+                        logger.info(f"AI sub-step started: {step_name}")
+                    
+                    # 更新子进度
+                    step["sub_progress"] = {"completed": completed, "total": total}
+                    
+                    # 如果完成了
+                    if completed >= total and step_name not in completed_substeps:
+                        step["status"] = "completed"
+                        step["completed_at"] = datetime.now().isoformat()
+                        try:
+                            started = datetime.fromisoformat(step["started_at"])
+                            step["duration_ms"] = int((datetime.now() - started).total_seconds() * 1000)
+                        except (KeyError, ValueError):
+                            step["duration_ms"] = 0
+                        completed_substeps.add(step_name)
+                        logger.info(f"AI sub-step completed: {step_name}")
+                    break
+            
+            # 重新计算总进度
+            self.result.progress._update_progress_percent()
+        
+        # 执行 AI 叙事生成（带进度回调）
+        narrative_service = AINarrativeService(self.ai_config)
+        self.result.narratives = await narrative_service.generate_full_narrative(
+            self.result.fused_graph,
+            self.result.risk_findings,
+            on_progress=on_progress,
+        )
+        
+        # 确保所有子步骤都标记为完成
+        for step_name, _, _ in substeps:
+            for step in self.result.progress.steps:
+                if step["name"] == step_name and step["status"] != "completed":
+                    step["status"] = "completed"
+                    if "completed_at" not in step:
+                        step["completed_at"] = datetime.now().isoformat()
+                    break
     
     async def _extract_protocol_state_machine(self) -> None:
         """Extract and format protocol state machine."""
@@ -270,13 +490,13 @@ class CodeAnalysisService:
                 case.get("case_id", ""),
                 case.get("category", ""),
                 case.get("scenario_name", ""),
-                "; ".join(case.get("preconditions", [])),
-                "; ".join(case.get("test_steps", [])),
+                "; ".join(_flatten_list(case.get("preconditions", []))),
+                "; ".join(_flatten_list(case.get("test_steps", []))),
                 case.get("expected_result", ""),
                 case.get("risk_result", ""),
-                "; ".join(case.get("checkpoints", [])),
+                "; ".join(_flatten_list(case.get("checkpoints", []))),
                 case.get("priority", ""),
-                ", ".join(case.get("risk_ids", [])),
+                ", ".join(_flatten_list(case.get("risk_ids", []))),
             ])
         
         return output.getvalue()

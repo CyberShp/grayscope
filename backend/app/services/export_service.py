@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 from app.analyzers.registry import get_display_name
 from app.core.exceptions import NotFoundError
 from app.repositories import task_repo
+from app.utils.data import flatten_list as _flatten_list
 
 logger = logging.getLogger(__name__)
 
@@ -611,13 +612,13 @@ def export_csv(db: Session, task_id: str) -> str:
             "line_start": "",
             "line_end": "",
             "risk_score": "",
-            "related_functions": "; ".join(c.get("related_functions", [])),
+            "related_functions": "; ".join(_flatten_list(c.get("related_functions", []))),
             "expected_outcome": c.get("expected_outcome", ""),
             "expected_failure": "",
-            "unacceptable_outcomes": "; ".join(c.get("unacceptable_outcomes", [])),
+            "unacceptable_outcomes": "; ".join(_flatten_list(c.get("unacceptable_outcomes", []))),
             "performance_requirement": c.get("performance_requirement", "") or "",
             "preconditions": "",
-            "test_steps": "; ".join(c.get("suggested_steps", [])),
+            "test_steps": "; ".join(_flatten_list(c.get("suggested_steps", []))),
             "expected_result": "",
             "execution_hint": str(c.get("fault_window", "")),
             "example_input": "",
@@ -630,14 +631,14 @@ def export_csv(db: Session, task_id: str) -> str:
         row = dict(c)
         row["source"] = "finding"
         row["covered"] = "是" if c.get("covered") else "否"
-        row["preconditions"] = "; ".join(c.get("preconditions", []))
-        row["test_steps"] = "; ".join(c.get("test_steps", []))
+        row["preconditions"] = "; ".join(_flatten_list(c.get("preconditions", [])))
+        row["test_steps"] = "; ".join(_flatten_list(c.get("test_steps", [])))
         exp = c.get("expected_result")
-        row["expected_result"] = "; ".join(exp) if isinstance(exp, list) else (exp or "")
-        row["related_functions"] = "; ".join(c.get("related_functions", []))
+        row["expected_result"] = "; ".join(_flatten_list(exp)) if isinstance(exp, list) else (exp or "")
+        row["related_functions"] = "; ".join(_flatten_list(c.get("related_functions", [])))
         row["expected_outcome"] = c.get("expected_outcome") or ""
         row["expected_failure"] = c.get("expected_failure") or ""
-        row["unacceptable_outcomes"] = "; ".join(c.get("unacceptable_outcomes", []))
+        row["unacceptable_outcomes"] = "; ".join(_flatten_list(c.get("unacceptable_outcomes", [])))
         row["execution_hint"] = c.get("execution_hint") or ""
         row["example_input"] = c.get("example_input") or ""
         row["scenario_brief"] = ""
@@ -818,9 +819,9 @@ def export_html(db: Session, task_id: str) -> str:
     ]
     if critical_export:
         for i, c in enumerate(critical_export, 1):
-            funcs = ", ".join(c.get("related_functions", []))
+            funcs = ", ".join(_flatten_list(c.get("related_functions", [])))
             outcome = _escape(c.get("expected_outcome", ""))
-            unacc = "；".join(c.get("unacceptable_outcomes", []))
+            unacc = "；".join(_flatten_list(c.get("unacceptable_outcomes", [])))
             brief = _escape(c.get("scenario_brief", ""))
             perf = _escape(c.get("performance_requirement", "") or "")
             html_parts.append(

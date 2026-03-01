@@ -3,6 +3,7 @@
 from app.models.analysis_task import AnalysisTask
 from app.models.audit_event import AuditEvent
 from app.models.base import Base
+from app.models.code_analysis_task import CodeAnalysisTask
 from app.models.coverage_import import CoverageImport
 from app.models.coverage_snapshot import CoverageSnapshot
 from app.models.defect_pattern import DefectPattern
@@ -26,6 +27,7 @@ __all__ = [
     "ModelConfig",
     "AnalysisTask",
     "AnalysisModuleResult",
+    "CodeAnalysisTask",
     "RiskFinding",
     "TestCase",
     "DefectPattern",
