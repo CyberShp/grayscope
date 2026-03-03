@@ -19,13 +19,23 @@ from app.analyzers.registry import get_display_name
 logger = logging.getLogger(__name__)
 
 # ── 模块 → 提示词模板映射 ──────────────────────────────────────────────
-_MODULE_TEMPLATES: dict[str, str] = {
+# None 表示该模块跳过 AI 增强（如 coverage_map 仅做数据叠加）
+_MODULE_TEMPLATES: dict[str, str | None] = {
+    # 现有模板映射
     "branch_path": "branch_path_analysis",
     "boundary_value": "boundary_value_analysis",
     "error_path": "error_path_analysis",
     "concurrency": "concurrency_analysis",
     "diff_impact": "diff_impact_analysis",
     "data_flow": "data_flow_analysis",
+    # 新增模块映射（复用现有模板或标记跳过）
+    "path_and_resource": "error_path_analysis",  # 资源路径分析，复用错误路径模板
+    "call_graph": "data_flow_analysis",          # 调用图分析，复用数据流模板
+    "exception": "error_path_analysis",           # 异常分支分析，复用错误路径模板
+    "protocol": "concurrency_analysis",           # 协议分析，复用并发模板（含锁/状态）
+    "coverage_map": None,                         # 覆盖率映射，纯数据叠加，跳过 AI
+    "postmortem": "error_path_analysis",          # 事后分析，复用错误路径模板
+    "knowledge_pattern": None,                    # 缺陷知识库，模式匹配为主，跳过 AI
 }
 
 
@@ -188,13 +198,25 @@ def enrich_module(
     dict，包含: ai_summary, test_suggestions, enriched_findings
     """
     display_name = get_display_name(module_id)
-    template_id = _MODULE_TEMPLATES.get(module_id)
-    if not template_id:
+    template_id = _MODULE_TEMPLATES.get(module_id, "MISSING")
+    
+    # 处理未知模块（不在映射表中）
+    if template_id == "MISSING":
         return {
-            "ai_summary": f"{display_name}暂无对应的提示词模板",
+            "ai_summary": f"{display_name}暂无对应的提示词模板（模块 ID: {module_id}）",
             "test_suggestions": [],
             "enriched_findings": findings,
             "success": False,
+        }
+    
+    # 处理明确跳过 AI 增强的模块（template_id 为 None）
+    if template_id is None:
+        return {
+            "ai_summary": f"{display_name}不适用 AI 增强（纯数据处理模块）",
+            "test_suggestions": [],
+            "enriched_findings": findings,
+            "success": True,  # 标记为成功，因为这是预期行为
+            "skipped": True,
         }
 
     provider_name = ai_config.get("provider", "ollama")

@@ -22,6 +22,8 @@ from typing import Any
 
 from app.analyzers.fused_graph_builder import FusedGraph, FusedGraphBuilder
 from app.analyzers.fused_risk_analyzer import FusedRiskAnalyzer
+from app.analyzers.semantic_indexer import SemanticIndexer
+from app.analyzers.deep_analysis_engine import DeepAnalysisEngine, DeepAnalysisResult
 from app.services.ai_narrative_service import AINarrativeService
 from app.utils.data import flatten_list as _flatten_list
 
@@ -210,6 +212,9 @@ class AnalysisResult:
         self.narratives: dict[str, Any] = {}
         self.protocol_state_machine: dict[str, Any] = {}
         self.progress: AnalysisProgress = AnalysisProgress()
+        # 深度分析结果（P0-P3）
+        self.deep_analysis: DeepAnalysisResult | None = None
+        self.semantic_index: dict[str, Any] = {}
     
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -220,6 +225,8 @@ class AnalysisResult:
             "narratives": self.narratives,
             "protocol_state_machine": self.protocol_state_machine,
             "progress": self.progress.to_dict(),
+            "deep_analysis": self.deep_analysis.to_dict() if self.deep_analysis else None,
+            "semantic_index": self.semantic_index,
         }
     
     def _serialize_fused_graph(self) -> dict[str, Any] | None:
@@ -293,37 +300,56 @@ class CodeAnalysisService:
     async def run_full_analysis(
         self,
         enable_ai: bool = True,
+        enable_deep_analysis: bool = True,
         max_files: int = 500,
     ) -> AnalysisResult:
         """Run complete analysis pipeline.
         
         步骤权重分配:
-        - 构建融合图: 30
-        - 跨维度风险分析: 20
-        - AI 叙事生成 (5 个子步骤): 40
-          - AI: 调用链叙事: 10
-          - AI: 函数字典: 10
-          - AI: 风险卡片: 8
-          - AI: What-If场景: 6
-          - AI: 测试矩阵: 6
+        - 构建融合图: 20
+        - 构建语义索引: 10
+        - 跨维度风险分析: 15
+        - 深度 AI 分析 (新增): 15
+        - AI 叙事生成 (5 个子步骤): 30
+          - AI: 调用链叙事: 8
+          - AI: 函数字典: 8
+          - AI: 风险卡片: 6
+          - AI: What-If场景: 4
+          - AI: 测试矩阵: 4
         - 协议状态机提取: 10
         """
         try:
             # Step 1: Build fused graph
-            self.result.progress.start_step("构建融合图", weight=30)
+            self.result.progress.start_step("构建融合图", weight=20)
             await self._build_fused_graph(max_files)
             self.result.progress.complete_step("构建融合图")
             
-            # Step 2: Risk analysis
-            self.result.progress.start_step("跨维度风险分析", weight=20)
+            # Step 2: Build semantic index (P0 core)
+            self.result.progress.start_step("构建语义索引", weight=10)
+            await self._build_semantic_index()
+            self.result.progress.complete_step("构建语义索引")
+            
+            # Step 3: Risk analysis
+            self.result.progress.start_step("跨维度风险分析", weight=15)
             await self._analyze_risks()
             self.result.progress.complete_step("跨维度风险分析")
             
-            # Step 3: AI narratives (if enabled) - 拆分为 5 个子步骤
+            # Step 4: Deep AI analysis (if enabled) - parallel with narratives
+            deep_analysis_task = None
+            if enable_deep_analysis and enable_ai and self.ai_config:
+                self.result.progress.start_step("深度 AI 分析", weight=15)
+                deep_analysis_task = asyncio.create_task(self._run_deep_analysis())
+            
+            # Step 5: AI narratives (if enabled) - 拆分为 5 个子步骤
             if enable_ai and self.ai_config:
                 await self._generate_narratives_with_substeps()
             
-            # Step 4: Extract protocol state machine
+            # Wait for deep analysis to complete
+            if deep_analysis_task:
+                await deep_analysis_task
+                self.result.progress.complete_step("深度 AI 分析")
+            
+            # Step 6: Extract protocol state machine
             self.result.progress.start_step("协议状态机提取", weight=10)
             await self._extract_protocol_state_machine()
             self.result.progress.complete_step("协议状态机提取")
@@ -355,6 +381,109 @@ class CodeAnalysisService:
         self.result.risk_findings = analysis_result.get("findings", [])
         self.result.comment_issues = analysis_result.get("comment_issues", [])
         self.result.risk_summary = analysis_result.get("summary", {})
+    
+    async def _build_semantic_index(self) -> None:
+        """Build semantic index from fused graph (P0 core).
+        
+        语义索引器是纯程序化的后处理，将 FusedGraph 中的原始数据
+        提升为更高层次的语义结构:
+        - 配对操作 (acquire/release 匹配)
+        - 未配对资源 (潜在泄漏/多余释放)
+        - 出口资源状态
+        - 回调上下文映射
+        - 所有权转移
+        - 初始化/退出对称性
+        """
+        if not self.result.fused_graph:
+            return
+        
+        try:
+            indexer = SemanticIndexer(self.result.fused_graph)
+            semantic_index = await asyncio.to_thread(indexer.build)
+            self.result.semantic_index = semantic_index.to_dict()
+            logger.info(
+                "Semantic index built: paired=%d, unpaired=%d, callbacks=%d, ownership=%d",
+                len(semantic_index.paired_operations),
+                len(semantic_index.unpaired_resources),
+                len(semantic_index.callback_contexts),
+                len(semantic_index.ownership_transfers),
+            )
+        except Exception as e:
+            logger.warning("Semantic index build failed: %s", e)
+            self.result.semantic_index = {}
+    
+    async def _run_deep_analysis(self) -> None:
+        """Run deep AI analysis using semantic index (P0-P3).
+        
+        深度分析引擎使用语义索引的结构化上下文，
+        组装 AI 提示进行跨函数语义分析:
+        - 资源泄漏检测 (P0)
+        - 回调约束违反 (P1)
+        - 所有权错误 (P1)
+        - 初始化/退出不对称 (P2)
+        """
+        if not self.result.fused_graph:
+            return
+        
+        try:
+            # 从已构建的语义索引重建 SemanticIndex 对象
+            indexer = SemanticIndexer(self.result.fused_graph)
+            semantic_index = indexer.build()
+            
+            # 运行深度分析
+            engine = DeepAnalysisEngine(
+                graph=self.result.fused_graph,
+                semantic_index=semantic_index,
+                ai_config=self.ai_config,
+            )
+            
+            deep_result = await engine.analyze(
+                existing_risk_findings=self.result.risk_findings,
+                max_targets=50,  # 限制分析目标数量
+            )
+            
+            self.result.deep_analysis = deep_result
+            
+            # 将深度分析发现合并到 risk_findings
+            if deep_result.findings:
+                merged_findings = self._merge_deep_findings(deep_result.findings)
+                self.result.risk_findings.extend(merged_findings)
+                logger.info("Deep analysis completed: %d new findings", len(merged_findings))
+            else:
+                logger.info("Deep analysis completed: no new findings")
+                
+        except Exception as e:
+            logger.warning("Deep analysis failed: %s", e)
+            self.result.deep_analysis = None
+    
+    def _merge_deep_findings(
+        self, deep_findings: list
+    ) -> list[dict[str, Any]]:
+        """Convert deep analysis findings to standard risk finding format."""
+        merged = []
+        
+        for finding in deep_findings:
+            # 转换为标准风险发现格式
+            risk_finding = {
+                "id": f"deep_{finding.finding_type}_{finding.file_path}_{finding.line_start}",
+                "type": finding.finding_type,
+                "severity": finding.severity,
+                "confidence": finding.confidence,
+                "title": finding.title,
+                "description": finding.description,
+                "file_path": finding.file_path,
+                "function_name": finding.function_name,
+                "line_start": finding.line_start,
+                "line_end": finding.line_end,
+                "execution_path": finding.execution_path,
+                "evidence": finding.evidence,
+                "fix_suggestion": finding.fix_suggestion,
+                "source": "deep_analysis",
+                "is_deep_finding": True,
+            }
+            merged.append(risk_finding)
+        
+        return merged
     
     async def _generate_narratives(self) -> None:
         """Generate AI narratives from analysis results (without sub-step tracking)."""

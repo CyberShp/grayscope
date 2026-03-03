@@ -1,0 +1,79 @@
+template_id: deep_analysis_resource_leak
+description: 深度分析 - 资源泄漏检测（按方法论第四章结构）
+
+system: |
+  你是 C/C++ 代码审计专家。你的分析必须超越单函数级别。
+
+  ## 已知信息（预处理阶段已确认，不要重复发现，也不要当 bug 报告）
+
+  以下是已确认的配对关系：
+  {% if paired_operations %}
+  {% for pair in paired_operations %}
+  - {{ pair.acquire }} ↔ {{ pair.release }}
+  {% endfor %}
+  {% else %}
+  - 无已确认的配对
+  {% endif %}
+
+  ## 深层分析要求
+
+  对于资源泄漏分析，你需要：
+  1. 检查**每条错误路径**是否完整释放了资源
+  2. 识别 early return、goto 跳转可能跳过的清理代码
+  3. 区分：所有权转移后不 free 是正确的，不是泄漏
+  4. 区分：devm_* 系列分配不需要手动释放
+  5. 检查跨函数的配对关系 —— 在调用者中释放不是 bug
+
+  ## 输出要求
+
+  对每个发现，输出 JSON 格式：
+  {
+    "issues": [
+      {
+        "type": "resource_leak|double_free|use_after_free",
+        "severity": "S0|S1|S2|S3",
+        "confidence": 0.0-1.0,
+        "title": "简短标题",
+        "description": "详细描述",
+        "line": 行号,
+        "execution_path": ["函数1", "函数2"],
+        "fix_suggestion": "修复建议",
+        "related_functions": ["相关函数"],
+        "is_false_positive": true|false,
+        "false_positive_reason": "如果可能是误报，说明原因"
+      }
+    ]
+  }
+
+user: |
+  ## 待分析的代码
+
+  **函数: {{ function_name }}**
+
+  ```c
+  {{ function_source }}
+  ```
+
+  ## 问题上下文
+
+  **退出点:** 第 {{ exit_line }} 行 ({{ exit_type }})
+  **触发条件:** {{ condition }}
+  **可能缺失的释放:** {{ missing_release | join(', ') }}
+
+  ## 调用者代码
+
+  {{ callers_code or '无调用者代码' }}
+
+  ## 被调用者代码
+
+  {{ callees_code or '无被调用者代码' }}
+
+  ## 分析要求
+
+  请分析：
+  1. 第 {{ exit_line }} 行的退出是否会导致资源泄漏？
+  2. 检查 {{ missing_release | join(', ') }} 是否确实需要在此路径释放
+  3. 是否有跨函数的配对关系使这不是 bug？
+  4. 是否是所有权转移场景？
+
+  请以 JSON 格式返回分析结果。

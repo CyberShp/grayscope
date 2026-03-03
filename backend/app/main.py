@@ -19,7 +19,7 @@ from app.api.v1.projects import router as projects_router
 from app.api.v1.repos import router as repos_router
 from app.api.v1.test_runs import router as test_runs_router
 from app.api.v1.execution_env import router as execution_env_router
-from app.core.database import engine
+from app.core.database import engine, SessionLocal
 from app.core.exceptions import GrayScopeError
 from app.core.response import error
 from app.models import Base
@@ -236,6 +236,17 @@ async def grayscope_error_handler(request: Request, exc: GrayScopeError):
     return JSONResponse(
         status_code=exc.status_code,
         content=error(exc.code, exc.message),
+    )
+
+
+# Handle AI provider errors specifically to return 400 instead of 500
+from app.ai.provider_registry import ProviderNotSupportedError
+
+@app.exception_handler(ProviderNotSupportedError)
+async def provider_error_handler(request: Request, exc: ProviderNotSupportedError):
+    return JSONResponse(
+        status_code=400,
+        content=error("PROVIDER_NOT_SUPPORTED", str(exc)),
     )
 
 

@@ -9,24 +9,30 @@
           <div class="gs-narrative-title">
             <el-icon><Guide /></el-icon>
             <span>{{ item.entry_point || '调用链 ' + (idx + 1) }}</span>
-            <el-tag size="small" type="info">{{ (item.call_chain || []).length }} 个函数</el-tag>
+            <el-tag size="small" type="info">{{ getCallChain(item).length }} 个函数</el-tag>
+            <el-tag v-if="item.error" size="small" type="danger">AI 失败</el-tag>
           </div>
         </template>
 
         <div class="gs-narrative-content">
+          <!-- AI 错误提示 -->
+          <el-alert v-if="item.error" type="warning" :closable="false" show-icon style="margin-bottom:16px">
+            <template #title>AI 叙事生成失败 ({{ item.error }})，仅展示代码结构信息</template>
+          </el-alert>
+
           <!-- 业务故事 -->
           <div class="gs-narrative-section">
             <h4><el-icon><Notebook /></el-icon> 业务流程故事</h4>
-            <div class="gs-story-box">{{ item.narrative || '暂无' }}</div>
+            <div class="gs-story-box">{{ item.narrative || (item.error ? '（AI 生成失败，请在设置中检查 AI 配置后重新分析）' : '暂无') }}</div>
           </div>
 
           <!-- 调用链 -->
           <div class="gs-narrative-section">
             <h4><el-icon><Connection /></el-icon> 调用链</h4>
             <div class="gs-chain">
-              <span v-for="(fn, i) in item.call_chain" :key="i" class="gs-chain-item">
+              <span v-for="(fn, i) in getCallChain(item)" :key="i" class="gs-chain-item">
                 <span class="gs-fn-name">{{ fn }}</span>
-                <el-icon v-if="i < item.call_chain.length - 1"><ArrowRight /></el-icon>
+                <el-icon v-if="i < getCallChain(item).length - 1"><ArrowRight /></el-icon>
               </span>
             </div>
           </div>
@@ -77,6 +83,10 @@ defineProps({
 })
 
 const activeNames = ref([0])
+
+function getCallChain(item) {
+  return item.call_chain || item.functions || []
+}
 </script>
 
 <style scoped>

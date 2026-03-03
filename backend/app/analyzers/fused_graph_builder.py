@@ -74,6 +74,51 @@ class FuncPtrAssignment:
 
 
 @dataclass
+class CallbackRegistration:
+    """回调函数注册 — 用于执行上下文约束检查（P1）"""
+    target_func: str          # 被注册的回调函数名
+    registration_api: str     # request_irq, timer_setup, INIT_WORK 等
+    execution_context: str    # atomic, process, softirq, workqueue, unknown
+    can_sleep: bool           # 执行上下文是否可以睡眠
+    file_path: str
+    line: int
+    constraints: list[str] = field(default_factory=list)  # 约束描述
+
+
+@dataclass
+class FieldAccessEntry:
+    """结构体字段访问记录 — 用于并发一致性检查（P2）"""
+    struct_expr: str      # 结构体表达式 (如 dev, ctx->dev)
+    field_name: str       # 字段名 (如 state, flags)
+    access_type: str      # read / write
+    line: int
+    locks_held: list[str] = field(default_factory=list)  # 访问时持有的锁
+
+
+@dataclass
+class ResourceOp:
+    """资源操作（配对操作的一侧）— 用于深度分析"""
+    op_type: str        # acquire / release
+    resource_kind: str  # memory, fd, lock, refcount, dma, clock, irq, timer, custom
+    api_name: str       # malloc, free, mutex_lock, etc.
+    resource_id: str    # 资源标识符（变量名/表达式）
+    line: int
+    in_branch: str      # 所在分支条件，空串表示主路径
+    in_error_path: bool # 是否在错误处理路径（goto label 后或 if err 块内）
+
+
+@dataclass
+class ErrorExit:
+    """错误退出点 — 用于深度分析"""
+    line: int
+    exit_type: str      # return, goto, break
+    target_label: str   # goto 目标 label，非 goto 时为空
+    return_value: str   # 返回值表达式
+    condition: str      # 触发退出的条件（如 if (ret < 0)）
+    resources_held: list[str] = field(default_factory=list)  # 此时持有的资源 ID
+
+
+@dataclass
 class FusedNode:
     """函数节点 — 融合了分支/锁/协议信息"""
     name: str
@@ -90,6 +135,11 @@ class FusedNode:
     is_entry_point: bool
     entry_point_type: str  # handler, callback, cmd, ioctl, main, thread_entry, none
     func_ptr_assignments: list[FuncPtrAssignment] = field(default_factory=list)
+    # 深度分析新增字段
+    resource_ops: list[ResourceOp] = field(default_factory=list)  # 资源获取/释放操作
+    error_exits: list[ErrorExit] = field(default_factory=list)     # 错误退出点
+    callback_registrations: list[CallbackRegistration] = field(default_factory=list)  # 回调注册（P1）
+    field_accesses: list[FieldAccessEntry] = field(default_factory=list)  # 结构体字段访问（P2）
 
 
 @dataclass
@@ -157,6 +207,52 @@ class FusedGraph:
                     ],
                     "is_entry_point": node.is_entry_point,
                     "entry_point_type": node.entry_point_type,
+                    # 深度分析新增字段
+                    "resource_ops": [
+                        {
+                            "op_type": r.op_type,
+                            "resource_kind": r.resource_kind,
+                            "api_name": r.api_name,
+                            "resource_id": r.resource_id,
+                            "line": r.line,
+                            "in_branch": r.in_branch,
+                            "in_error_path": r.in_error_path,
+                        }
+                        for r in node.resource_ops
+                    ],
+                    "error_exits": [
+                        {
+                            "line": e.line,
+                            "exit_type": e.exit_type,
+                            "target_label": e.target_label,
+                            "return_value": e.return_value,
+                            "condition": e.condition,
+                            "resources_held": e.resources_held,
+                        }
+                        for e in node.error_exits
+                    ],
+                    "callback_registrations": [
+                        {
+                            "target_func": cb.target_func,
+                            "registration_api": cb.registration_api,
+                            "execution_context": cb.execution_context,
+                            "can_sleep": cb.can_sleep,
+                            "file_path": cb.file_path,
+                            "line": cb.line,
+                            "constraints": cb.constraints,
+                        }
+                        for cb in node.callback_registrations
+                    ],
+                    "field_accesses": [
+                        {
+                            "struct_expr": fa.struct_expr,
+                            "field_name": fa.field_name,
+                            "access_type": fa.access_type,
+                            "line": fa.line,
+                            "locks_held": fa.locks_held,
+                        }
+                        for fa in node.field_accesses
+                    ],
                 }
                 for name, node in self.nodes.items()
             },
@@ -273,6 +369,176 @@ _LOCK_MACRO_RE = re.compile(
 # 宏定义展开识别: #define MACRO(args) real_func(args)
 _MACRO_FUNC_DEF_RE = re.compile(
     r"#define\s+(\w+)\s*\([^)]*\)\s+(\w+)\s*\("
+)
+
+# ========== 深度分析：资源操作模式 ==========
+# 配对操作表（方法论 2.1）：acquire -> release
+_RESOURCE_PAIRS: dict[str, tuple[str, str]] = {
+    # 内存分配
+    "malloc": ("memory", "free"),
+    "calloc": ("memory", "free"),
+    "realloc": ("memory", "free"),
+    "strdup": ("memory", "free"),
+    "strndup": ("memory", "free"),
+    "kmalloc": ("memory", "kfree"),
+    "kzalloc": ("memory", "kfree"),
+    "kcalloc": ("memory", "kfree"),
+    "vmalloc": ("memory", "vfree"),
+    "vzalloc": ("memory", "vfree"),
+    "devm_kmalloc": ("memory", None),  # devm_ 系列由框架自动释放
+    "devm_kzalloc": ("memory", None),
+    # 文件/套接字
+    "open": ("fd", "close"),
+    "fopen": ("fd", "fclose"),
+    "socket": ("fd", "close"),
+    "accept": ("fd", "close"),
+    "dup": ("fd", "close"),
+    "dup2": ("fd", "close"),
+    "pipe": ("fd", "close"),
+    "epoll_create": ("fd", "close"),
+    "epoll_create1": ("fd", "close"),
+    "eventfd": ("fd", "close"),
+    "timerfd_create": ("fd", "close"),
+    "signalfd": ("fd", "close"),
+    "inotify_init": ("fd", "close"),
+    "inotify_init1": ("fd", "close"),
+    # 锁（这些已经在 lock_ops 中处理，这里记录为配对资源）
+    "pthread_mutex_lock": ("lock", "pthread_mutex_unlock"),
+    "pthread_spin_lock": ("lock", "pthread_spin_unlock"),
+    "pthread_rwlock_rdlock": ("lock", "pthread_rwlock_unlock"),
+    "pthread_rwlock_wrlock": ("lock", "pthread_rwlock_unlock"),
+    "mutex_lock": ("lock", "mutex_unlock"),
+    "spin_lock": ("lock", "spin_unlock"),
+    "spin_lock_irq": ("lock", "spin_unlock_irq"),
+    "spin_lock_irqsave": ("lock", "spin_unlock_irqrestore"),
+    "read_lock": ("lock", "read_unlock"),
+    "write_lock": ("lock", "write_unlock"),
+    "down": ("lock", "up"),
+    "down_read": ("lock", "up_read"),
+    "down_write": ("lock", "up_write"),
+    "sem_wait": ("lock", "sem_post"),
+    "EnterCriticalSection": ("lock", "LeaveCriticalSection"),
+    # 引用计数
+    "kref_get": ("refcount", "kref_put"),
+    "get_device": ("refcount", "put_device"),
+    "kobject_get": ("refcount", "kobject_put"),
+    "module_get": ("refcount", "module_put"),
+    "AddRef": ("refcount", "Release"),
+    # DMA/MMIO
+    "dma_map_single": ("dma", "dma_unmap_single"),
+    "dma_map_page": ("dma", "dma_unmap_page"),
+    "dma_map_sg": ("dma", "dma_unmap_sg"),
+    "ioremap": ("mmio", "iounmap"),
+    "ioremap_nocache": ("mmio", "iounmap"),
+    "pci_iomap": ("mmio", "pci_iounmap"),
+    # 时钟/电源
+    "clk_prepare_enable": ("clock", "clk_disable_unprepare"),
+    "clk_enable": ("clock", "clk_disable"),
+    "pm_runtime_get_sync": ("power", "pm_runtime_put"),
+    "pm_runtime_get": ("power", "pm_runtime_put"),
+    # 定时器/工作队列
+    "timer_setup": ("timer", "del_timer_sync"),
+    "mod_timer": ("timer", "del_timer"),
+    "add_timer": ("timer", "del_timer"),
+    "queue_work": ("workqueue", "cancel_work_sync"),
+    "queue_delayed_work": ("workqueue", "cancel_delayed_work_sync"),
+    "schedule_work": ("workqueue", "cancel_work_sync"),
+    # 设备/中断注册
+    "request_irq": ("irq", "free_irq"),
+    "request_threaded_irq": ("irq", "free_irq"),
+    "devm_request_irq": ("irq", None),  # devm_ 系列自动释放
+    "register_chrdev": ("device", "unregister_chrdev"),
+    "register_netdev": ("device", "unregister_netdev"),
+    "platform_device_register": ("device", "platform_device_unregister"),
+    # 中断/抢占禁用
+    "local_irq_disable": ("irq_state", "local_irq_enable"),
+    "local_irq_save": ("irq_state", "local_irq_restore"),
+    "preempt_disable": ("preempt", "preempt_enable"),
+    # RCU
+    "rcu_read_lock": ("rcu", "rcu_read_unlock"),
+    "rcu_read_lock_bh": ("rcu", "rcu_read_unlock_bh"),
+    "rcu_read_lock_sched": ("rcu", "rcu_read_unlock_sched"),
+}
+
+# 构建资源获取正则
+_RESOURCE_ACQUIRE_APIS = "|".join(re.escape(api) for api in _RESOURCE_PAIRS.keys())
+_RESOURCE_ACQUIRE_RE = re.compile(
+    rf"\b({_RESOURCE_ACQUIRE_APIS})\s*\(\s*([^,)]*)"
+)
+
+# 构建资源释放正则
+_RELEASE_APIS: set[str] = set()
+for _, (_, release) in _RESOURCE_PAIRS.items():
+    if release:
+        _RELEASE_APIS.add(release)
+_RESOURCE_RELEASE_APIS = "|".join(re.escape(api) for api in _RELEASE_APIS)
+_RESOURCE_RELEASE_RE = re.compile(
+    rf"\b({_RESOURCE_RELEASE_APIS})\s*\(\s*([^,)]*)"
+)
+
+# 错误退出点模式
+_ERROR_RETURN_RE = re.compile(
+    r"\breturn\s+([^;]+);",
+    re.MULTILINE,
+)
+_GOTO_RE = re.compile(
+    r"\bgoto\s+(\w+)\s*;",
+)
+_LABEL_RE = re.compile(
+    r"^(\w+)\s*:",
+    re.MULTILINE,
+)
+# 错误条件检测模式
+_ERROR_CONDITION_RE = re.compile(
+    r"\bif\s*\(\s*(!?\s*\w+|[^)]+[<>=!]+[^)]+)\s*\)",
+)
+
+# ========== 回调注册 API → 执行上下文映射（P1 回调约束检查） ==========
+_CALLBACK_REGISTRATION_MAP: dict[str, tuple[str, bool]] = {
+    # (execution_context, can_sleep)
+    # 中断相关
+    "request_irq": ("atomic", False),
+    "request_threaded_irq": ("process", True),  # threaded handler 在进程上下文
+    "devm_request_irq": ("atomic", False),
+    "devm_request_threaded_irq": ("process", True),
+    "setup_irq": ("atomic", False),
+    # 定时器
+    "timer_setup": ("softirq", False),
+    "mod_timer": ("softirq", False),
+    "add_timer": ("softirq", False),
+    "init_timer": ("softirq", False),
+    "hrtimer_init": ("softirq", False),
+    "hrtimer_start": ("softirq", False),
+    # tasklet
+    "tasklet_init": ("softirq", False),
+    "tasklet_setup": ("softirq", False),
+    "tasklet_schedule": ("softirq", False),
+    # 工作队列
+    "INIT_WORK": ("process", True),
+    "INIT_DELAYED_WORK": ("process", True),
+    "queue_work": ("process", True),
+    "queue_delayed_work": ("process", True),
+    "schedule_work": ("process", True),
+    "schedule_delayed_work": ("process", True),
+    # 内核线程
+    "kthread_create": ("process", True),
+    "kthread_run": ("process", True),
+    "kernel_thread": ("process", True),
+    # POSIX 线程
+    "pthread_create": ("process", True),
+    # notifier
+    "register_netdevice_notifier": ("unknown", False),
+    "register_reboot_notifier": ("process", True),
+    "register_pm_notifier": ("process", True),
+    # 其他回调注册
+    "register_console": ("atomic", False),
+    "register_nmi_handler": ("atomic", False),
+}
+
+# 构建回调注册 API 正则
+_CALLBACK_APIS = "|".join(re.escape(api) for api in _CALLBACK_REGISTRATION_MAP.keys())
+_CALLBACK_REGISTRATION_RE = re.compile(
+    rf"\b({_CALLBACK_APIS})\s*\([^)]*[,\s]&?\s*(\w+)\s*[,)]"
 )
 
 
@@ -530,6 +796,18 @@ class FusedGraphBuilder:
         # 提取函数指针赋值
         func_ptr_assignments = self._extract_func_ptr_assignments(fn_source, line_start)
 
+        # 深度分析：提取资源操作（P0 核心）
+        resource_ops = self._extract_resource_ops(fn_source, line_start, branches)
+
+        # 深度分析：提取错误退出点（P0 核心）
+        error_exits = self._extract_error_exits(fn_source, line_start, resource_ops)
+
+        # 深度分析：提取回调注册（P1 回调约束检查）
+        callback_registrations = self._extract_callback_registrations(fn_source, file_path, line_start)
+
+        # 深度分析：提取结构体字段访问（P2 并发一致性检查）
+        field_accesses = self._extract_field_accesses(fn_source, line_start, lock_state_by_line)
+
         return FusedNode(
             name=fn_name,
             file_path=file_path,
@@ -545,6 +823,10 @@ class FusedGraphBuilder:
             is_entry_point=is_entry,
             entry_point_type=entry_type,
             func_ptr_assignments=func_ptr_assignments,
+            resource_ops=resource_ops,
+            error_exits=error_exits,
+            callback_registrations=callback_registrations,
+            field_accesses=field_accesses,
         )
 
     def _extract_params(self, source: str, fn_name: str) -> list[str]:
@@ -796,6 +1078,367 @@ class FusedGraphBuilder:
             ))
 
         return ops
+
+    def _extract_resource_ops(
+        self, source: str, line_start: int, branches: list[Branch]
+    ) -> list[ResourceOp]:
+        """提取资源获取/释放操作（深度分析 P0 核心）
+        
+        识别标准 C/C++ 配对操作（方法论 2.1）以及项目自定义配对函数。
+        """
+        ops: list[ResourceOp] = []
+        lines = source.split("\n")
+        
+        # 构建分支条件映射：line -> branch_condition
+        branch_conditions: dict[int, str] = {}
+        current_branch = ""
+        for b in sorted(branches, key=lambda x: x.line):
+            branch_conditions[b.line] = b.condition
+        
+        # 检测 error_out/cleanup label 位置
+        error_labels: set[int] = set()
+        for m in _LABEL_RE.finditer(source):
+            label = m.group(1).lower()
+            if any(x in label for x in ("err", "out", "fail", "cleanup", "exit", "error")):
+                line_offset = source[:m.start()].count("\n")
+                error_labels.add(line_start + line_offset)
+        
+        for line_idx, line in enumerate(lines):
+            actual_line = line_start + line_idx
+            
+            # 确定当前所在分支
+            in_branch = ""
+            for bl, cond in branch_conditions.items():
+                if bl <= actual_line:
+                    in_branch = cond
+            
+            # 检测是否在错误路径（在 error label 之后）
+            in_error_path = any(actual_line > el for el in error_labels)
+            
+            # 检测资源获取
+            for m in _RESOURCE_ACQUIRE_RE.finditer(line):
+                api_name = m.group(1)
+                resource_id = m.group(2).strip() if m.group(2) else ""
+                
+                if api_name in _RESOURCE_PAIRS:
+                    resource_kind, _ = _RESOURCE_PAIRS[api_name]
+                    ops.append(ResourceOp(
+                        op_type="acquire",
+                        resource_kind=resource_kind,
+                        api_name=api_name,
+                        resource_id=resource_id[:100],
+                        line=actual_line,
+                        in_branch=in_branch[:200],
+                        in_error_path=in_error_path,
+                    ))
+            
+            # 检测资源释放
+            for m in _RESOURCE_RELEASE_RE.finditer(line):
+                api_name = m.group(1)
+                resource_id = m.group(2).strip() if m.group(2) else ""
+                
+                # 反向查找对应的 resource_kind
+                resource_kind = "unknown"
+                for acquire_api, (kind, release_api) in _RESOURCE_PAIRS.items():
+                    if release_api == api_name:
+                        resource_kind = kind
+                        break
+                
+                ops.append(ResourceOp(
+                    op_type="release",
+                    resource_kind=resource_kind,
+                    api_name=api_name,
+                    resource_id=resource_id[:100],
+                    line=actual_line,
+                    in_branch=in_branch[:200],
+                    in_error_path=in_error_path,
+                ))
+        
+        # 识别项目自定义配对函数（命名惯例推断）
+        ops.extend(self._extract_custom_resource_ops(source, line_start, branch_conditions, error_labels))
+        
+        return ops
+
+    def _extract_custom_resource_ops(
+        self,
+        source: str,
+        line_start: int,
+        branch_conditions: dict[int, str],
+        error_labels: set[int],
+    ) -> list[ResourceOp]:
+        """识别项目自定义的配对函数（通过命名惯例推断）
+        
+        惯例：xxx_init/xxx_deinit, xxx_acquire/xxx_release, xxx_open/xxx_close,
+              xxx_alloc/xxx_free, xxx_get/xxx_put, xxx_lock/xxx_unlock
+        """
+        ops: list[ResourceOp] = []
+        lines = source.split("\n")
+        
+        # 配对后缀模式
+        acquire_patterns = [
+            (r"\b(\w+)_init\s*\(", "_init", "custom"),
+            (r"\b(\w+)_acquire\s*\(", "_acquire", "custom"),
+            (r"\b(\w+)_open\s*\(", "_open", "custom"),
+            (r"\b(\w+)_alloc\s*\(", "_alloc", "custom"),
+            (r"\b(\w+)_get\s*\(", "_get", "custom"),
+            (r"\b(\w+)_create\s*\(", "_create", "custom"),
+            (r"\b(\w+)_start\s*\(", "_start", "custom"),
+            (r"\b(\w+)_enable\s*\(", "_enable", "custom"),
+        ]
+        release_patterns = [
+            (r"\b(\w+)_deinit\s*\(", "_deinit", "custom"),
+            (r"\b(\w+)_release\s*\(", "_release", "custom"),
+            (r"\b(\w+)_close\s*\(", "_close", "custom"),
+            (r"\b(\w+)_free\s*\(", "_free", "custom"),
+            (r"\b(\w+)_put\s*\(", "_put", "custom"),
+            (r"\b(\w+)_destroy\s*\(", "_destroy", "custom"),
+            (r"\b(\w+)_stop\s*\(", "_stop", "custom"),
+            (r"\b(\w+)_disable\s*\(", "_disable", "custom"),
+        ]
+        
+        for line_idx, line in enumerate(lines):
+            actual_line = line_start + line_idx
+            
+            # 确定当前所在分支
+            in_branch = ""
+            for bl, cond in branch_conditions.items():
+                if bl <= actual_line:
+                    in_branch = cond
+            
+            in_error_path = any(actual_line > el for el in error_labels)
+            
+            # 检测自定义 acquire
+            for pattern, suffix, kind in acquire_patterns:
+                for m in re.finditer(pattern, line):
+                    prefix = m.group(1)
+                    api_name = f"{prefix}{suffix}"
+                    # 排除标准库函数（已在主列表中处理）
+                    if api_name in _RESOURCE_PAIRS:
+                        continue
+                    ops.append(ResourceOp(
+                        op_type="acquire",
+                        resource_kind=kind,
+                        api_name=api_name,
+                        resource_id=prefix,
+                        line=actual_line,
+                        in_branch=in_branch[:200],
+                        in_error_path=in_error_path,
+                    ))
+            
+            # 检测自定义 release
+            for pattern, suffix, kind in release_patterns:
+                for m in re.finditer(pattern, line):
+                    prefix = m.group(1)
+                    api_name = f"{prefix}{suffix}"
+                    ops.append(ResourceOp(
+                        op_type="release",
+                        resource_kind=kind,
+                        api_name=api_name,
+                        resource_id=prefix,
+                        line=actual_line,
+                        in_branch=in_branch[:200],
+                        in_error_path=in_error_path,
+                    ))
+        
+        return ops
+
+    def _extract_error_exits(
+        self, source: str, line_start: int, resource_ops: list[ResourceOp]
+    ) -> list[ErrorExit]:
+        """提取错误退出点（深度分析 P0 核心）
+        
+        识别 return, goto, break 等可能导致资源泄漏的退出点，
+        并计算每个退出点处持有的资源。
+        """
+        exits: list[ErrorExit] = []
+        lines = source.split("\n")
+        
+        # 按行号排序资源操作，用于计算每个退出点的资源持有状态
+        resource_ops_sorted = sorted(resource_ops, key=lambda x: x.line)
+        
+        # 收集所有 label 定义
+        labels: dict[str, int] = {}
+        for m in _LABEL_RE.finditer(source):
+            label_name = m.group(1)
+            line_offset = source[:m.start()].count("\n")
+            labels[label_name] = line_start + line_offset
+        
+        # 检测错误条件上下文
+        current_error_condition = ""
+        
+        for line_idx, line in enumerate(lines):
+            actual_line = line_start + line_idx
+            
+            # 检测错误条件
+            err_cond_match = _ERROR_CONDITION_RE.search(line)
+            if err_cond_match:
+                cond = err_cond_match.group(1)
+                # 检测是否为错误检测条件
+                if any(x in cond.lower() for x in ("err", "ret", "rc", "status", "< 0", "!= 0", "== null", "== -1", "fail")):
+                    current_error_condition = cond
+            
+            # 计算此行时持有的资源
+            resources_held: list[str] = []
+            resource_state: dict[str, int] = {}  # resource_id -> count
+            for rop in resource_ops_sorted:
+                if rop.line <= actual_line:
+                    if rop.op_type == "acquire":
+                        resource_state[rop.resource_id] = resource_state.get(rop.resource_id, 0) + 1
+                    elif rop.op_type == "release" and rop.resource_id in resource_state:
+                        resource_state[rop.resource_id] = max(0, resource_state[rop.resource_id] - 1)
+            resources_held = [rid for rid, cnt in resource_state.items() if cnt > 0]
+            
+            # 检测 return
+            ret_match = _ERROR_RETURN_RE.search(line)
+            if ret_match:
+                return_value = ret_match.group(1).strip()
+                # 检测是否为错误返回
+                is_error_return = any(x in return_value.lower() for x in 
+                    ("-1", "null", "err", "fail", "false", "-e", "einval", "enomem", "enoent"))
+                
+                # 只记录错误路径返回或持有资源的返回
+                if is_error_return or resources_held:
+                    exits.append(ErrorExit(
+                        line=actual_line,
+                        exit_type="return",
+                        target_label="",
+                        return_value=return_value[:100],
+                        condition=current_error_condition[:200],
+                        resources_held=resources_held[:20],
+                    ))
+                    current_error_condition = ""  # 重置条件
+            
+            # 检测 goto
+            goto_match = _GOTO_RE.search(line)
+            if goto_match:
+                target_label = goto_match.group(1)
+                exits.append(ErrorExit(
+                    line=actual_line,
+                    exit_type="goto",
+                    target_label=target_label,
+                    return_value="",
+                    condition=current_error_condition[:200],
+                    resources_held=resources_held[:20],
+                ))
+                current_error_condition = ""
+        
+        return exits
+
+    def _extract_callback_registrations(
+        self, source: str, file_path: str, line_start: int
+    ) -> list[CallbackRegistration]:
+        """提取回调注册（深度分析 P1 回调约束检查）
+        
+        识别 request_irq, timer_setup, INIT_WORK 等回调注册 API，
+        并推断回调函数的执行上下文约束。
+        """
+        registrations: list[CallbackRegistration] = []
+        lines = source.split("\n")
+        
+        for line_idx, line in enumerate(lines):
+            actual_line = line_start + line_idx
+            
+            # 使用正则匹配回调注册 API
+            for m in _CALLBACK_REGISTRATION_RE.finditer(line):
+                api_name = m.group(1)
+                target_func = m.group(2)
+                
+                if api_name in _CALLBACK_REGISTRATION_MAP:
+                    execution_context, can_sleep = _CALLBACK_REGISTRATION_MAP[api_name]
+                    
+                    # 构建约束描述
+                    constraints: list[str] = []
+                    if not can_sleep:
+                        constraints.append("不能调用可睡眠函数（mutex_lock, GFP_KERNEL, msleep等）")
+                    if execution_context == "atomic":
+                        constraints.append("不能使用 copy_from_user/copy_to_user")
+                    if execution_context == "softirq":
+                        constraints.append("可被硬中断打断")
+                    
+                    registrations.append(CallbackRegistration(
+                        target_func=target_func,
+                        registration_api=api_name,
+                        execution_context=execution_context,
+                        can_sleep=can_sleep,
+                        file_path=file_path,
+                        line=actual_line,
+                        constraints=constraints,
+                    ))
+            
+            # 检测 INIT_WORK / INIT_DELAYED_WORK 宏（特殊格式）
+            work_match = re.search(r"\b(INIT_WORK|INIT_DELAYED_WORK)\s*\(\s*&?\s*\w+\s*,\s*(\w+)\s*\)", line)
+            if work_match:
+                api_name = work_match.group(1)
+                target_func = work_match.group(2)
+                
+                registrations.append(CallbackRegistration(
+                    target_func=target_func,
+                    registration_api=api_name,
+                    execution_context="process",
+                    can_sleep=True,
+                    file_path=file_path,
+                    line=actual_line,
+                    constraints=[],
+                ))
+        
+        return registrations
+
+    def _extract_field_accesses(
+        self, source: str, line_start: int, lock_state_by_line: dict[int, list[str]]
+    ) -> list[FieldAccessEntry]:
+        """提取结构体字段访问（深度分析 P2 并发一致性检查）
+        
+        识别对结构体字段的读写访问，记录访问时持有的锁，
+        用于跨函数汇聚后检测竞态条件。
+        """
+        accesses: list[FieldAccessEntry] = []
+        lines = source.split("\n")
+        
+        # 匹配结构体字段访问: expr->field 或 expr.field
+        # 写访问: expr->field = ..., expr->field++, expr->field |= ...
+        # 读访问: ...expr->field... (非赋值左侧)
+        field_access_re = re.compile(r"(\w+(?:\[\w+\])?)\s*(?:->|\.)\s*(\w+)")
+        write_pattern_re = re.compile(r"(\w+(?:\[\w+\])?)\s*(?:->|\.)\s*(\w+)\s*(?:=(?!=)|[+\-*/&|^]=|\+\+|--)")
+        
+        for line_idx, line in enumerate(lines):
+            actual_line = line_start + line_idx
+            
+            # 获取当前行的锁状态
+            held_locks: list[str] = []
+            for ln in sorted(lock_state_by_line.keys()):
+                if ln <= actual_line:
+                    held_locks = lock_state_by_line[ln]
+                else:
+                    break
+            
+            # 检测写访问
+            write_matches = set()
+            for m in write_pattern_re.finditer(line):
+                struct_expr, field_name = m.group(1), m.group(2)
+                write_matches.add((struct_expr, field_name))
+                accesses.append(FieldAccessEntry(
+                    struct_expr=struct_expr[:50],
+                    field_name=field_name,
+                    access_type="write",
+                    line=actual_line,
+                    locks_held=list(held_locks),
+                ))
+            
+            # 检测读访问（排除已记录的写访问）
+            for m in field_access_re.finditer(line):
+                struct_expr, field_name = m.group(1), m.group(2)
+                if (struct_expr, field_name) not in write_matches:
+                    # 排除常见的非字段名（如关键字）
+                    if field_name not in {"if", "else", "while", "for", "return", "sizeof"}:
+                        accesses.append(FieldAccessEntry(
+                            struct_expr=struct_expr[:50],
+                            field_name=field_name,
+                            access_type="read",
+                            line=actual_line,
+                            locks_held=list(held_locks),
+                        ))
+        
+        return accesses
 
     def _check_entry_point(self, fn_name: str) -> tuple[bool, str]:
         """检查函数是否为入口点"""

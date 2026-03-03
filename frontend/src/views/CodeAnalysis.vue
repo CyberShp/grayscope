@@ -229,6 +229,14 @@
           <RiskFindings :findings="risks.findings" :summary="risks.summary" />
         </el-tab-pane>
 
+        <el-tab-pane name="deep-analysis">
+          <template #label>
+            深度分析
+            <el-badge v-if="deepAnalysis.findings?.length" :value="deepAnalysis.findings.length" class="gs-tab-badge" type="danger" />
+          </template>
+          <DeepAnalysisFindings :findings="deepAnalysis.findings" :semantic-index="semanticIndex" />
+        </el-tab-pane>
+
         <el-tab-pane name="risk-cards">
           <template #label>
             风险卡片
@@ -272,7 +280,7 @@
         <el-tab-pane name="protocol-sm">
           <template #label>
             协议状态机
-            <el-badge v-if="protocolSM.states?.length" :value="protocolSM.states.length" class="gs-tab-badge" type="info" />
+            <el-badge v-if="protocolSmStateCount" :value="protocolSmStateCount" class="gs-tab-badge" type="info" />
           </template>
           <ProtocolStateMachine :data="protocolSM" />
         </el-tab-pane>
@@ -295,6 +303,7 @@ import FunctionDictionary from '../components/analysis/FunctionDictionary.vue'
 import WhatIfScenarios from '../components/analysis/WhatIfScenarios.vue'
 import TestDesignMatrix from '../components/analysis/TestDesignMatrix.vue'
 import ProtocolStateMachine from '../components/analysis/ProtocolStateMachine.vue'
+import DeepAnalysisFindings from '../components/analysis/DeepAnalysisFindings.vue'
 
 const mode = ref('list')
 
@@ -329,12 +338,21 @@ const functionDict = ref({})
 const whatIfScenarios = ref([])
 const testMatrix = ref({})
 const protocolSM = ref({})
+const deepAnalysis = ref({ findings: [] })
+const semanticIndex = ref({})
 
 let pollTimer = null
 let liveTimer = null
 const nowTimestamp = ref(Date.now())
 
 const selectedRepo = computed(() => repos.value.find(r => r.repo_id === form.value.repo_id))
+
+const protocolSmStateCount = computed(() => {
+  const s = protocolSM.value?.states
+  if (!s) return 0
+  if (Array.isArray(s)) return s.length
+  return Object.keys(s).length
+})
 
 // 实时计算已用时间（秒）
 const liveElapsed = computed(() => {
@@ -521,6 +539,8 @@ async function loadResults() {
     api.getCodeAnalysisWhatIf(analysisId.value),
     api.getCodeAnalysisTestMatrix(analysisId.value),
     api.getCodeAnalysisProtocolSM(analysisId.value),
+    api.getCodeAnalysisDeepFindings(analysisId.value),
+    api.getCodeAnalysisSemanticIndex(analysisId.value),
   ])
   
   // Helper to extract value from settled result
@@ -534,6 +554,8 @@ async function loadResults() {
   whatIfScenarios.value = getValue(results[5])?.scenarios || []
   testMatrix.value = getValue(results[6])
   protocolSM.value = getValue(results[7])
+  deepAnalysis.value = getValue(results[8]) || { findings: [] }
+  semanticIndex.value = getValue(results[9]) || {}
   
   // Warn about any failures without blocking other results
   const failures = results.filter(r => r.status === 'rejected')

@@ -172,6 +172,8 @@ export default {
   getCodeAnalysisWhatIf: (analysisId) => request('GET', `/code-analysis/${analysisId}/what-if`),
   getCodeAnalysisTestMatrix: (analysisId) => request('GET', `/code-analysis/${analysisId}/test-matrix`),
   getCodeAnalysisProtocolSM: (analysisId) => request('GET', `/code-analysis/${analysisId}/protocol-state-machine`),
+  getCodeAnalysisDeepFindings: (analysisId) => request('GET', `/code-analysis/${analysisId}/deep-analysis`),
+  getCodeAnalysisSemanticIndex: (analysisId) => request('GET', `/code-analysis/${analysisId}/semantic-index`),
   exportCodeAnalysis: (analysisId, fmt = 'json') => `${BASE}/code-analysis/${analysisId}/export?fmt=${fmt}`,
   listCodeAnalyses: (params = {}) => {
     const qs = new URLSearchParams(params).toString()

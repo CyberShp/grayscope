@@ -9,10 +9,22 @@
         <template #title>
           <div class="gs-group-title">
             <el-icon><QuestionFilled /></el-icon>
-            <span>调用链 {{ idx + 1 }}</span>
+            <span>调用链 {{ idx + 1 }}: {{ getChainPreview(group) }}</span>
             <el-tag size="small" type="info">{{ group.scenarios?.length || 0 }} 个场景</el-tag>
+            <el-tag v-if="group.error" size="small" type="danger">AI 失败</el-tag>
           </div>
         </template>
+
+        <!-- AI 错误提示 -->
+        <el-alert v-if="group.error" type="warning" :closable="false" show-icon style="margin-bottom:16px">
+          <template #title>What-If 场景生成失败 ({{ group.error }})，请检查 AI 配置后重新分析</template>
+        </el-alert>
+
+        <!-- 调用链信息（即使AI失败也显示） -->
+        <div v-if="group.call_chain?.length && !group.scenarios?.length" class="gs-group-summary">
+          <el-icon><InfoFilled /></el-icon>
+          <span>调用链: {{ group.call_chain.join(' → ') }}</span>
+        </div>
 
         <div class="gs-group-summary" v-if="group.summary">
           <el-icon><InfoFilled /></el-icon>
@@ -70,6 +82,13 @@ defineProps({
 })
 
 const activeNames = ref([0])
+
+function getChainPreview(group) {
+  const chain = group.call_chain || []
+  if (!chain.length) return ''
+  const first = chain[0]?.split('(')[0] || chain[0]
+  return chain.length > 1 ? `${first} → ... (${chain.length})` : first
+}
 
 function riskLevelTag(level) {
   const map = { high: 'danger', medium: 'warning', low: 'info' }

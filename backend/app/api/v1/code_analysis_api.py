@@ -118,11 +118,50 @@ def _load_result_from_json(result_json: str | None) -> AnalysisResult | None:
         result.risk_summary = data.get("risk_summary", {})
         result.narratives = data.get("narratives", {})
         result.protocol_state_machine = data.get("protocol_state_machine", {})
+        result.semantic_index = data.get("semantic_index", {})
         # fused_graph is stored as serialized dict; keep as-is for read paths
         result._serialized_fused_graph = data.get("fused_graph")
+
+        # Reconstruct deep_analysis if present
+        deep = data.get("deep_analysis")
+        if deep and isinstance(deep, dict):
+            result.deep_analysis = deep
+
+        # Compute risk_summary on-the-fly if stored value is empty
+        if not result.risk_summary and result.risk_findings:
+            result.risk_summary = _compute_risk_summary(result.risk_findings)
+
         return result
     except Exception:
         return None
+
+
+_SEVERITY_NORMALIZE = {
+    "S0": "critical", "s0": "critical",
+    "S1": "high", "s1": "high",
+    "S2": "medium", "s2": "medium",
+    "S3": "low", "s3": "low",
+    "critical": "critical", "high": "high", "medium": "medium", "low": "low",
+}
+
+
+def _compute_risk_summary(findings: list[dict]) -> dict[str, Any]:
+    """Compute risk summary statistics from findings list."""
+    severity_dist: dict[str, int] = {"critical": 0, "high": 0, "medium": 0, "low": 0}
+    type_dist: dict[str, int] = {}
+
+    for f in findings:
+        sev = f.get("severity", "unknown")
+        normalized = _SEVERITY_NORMALIZE.get(sev, sev)
+        severity_dist[normalized] = severity_dist.get(normalized, 0) + 1
+        rt = f.get("risk_type", "unknown")
+        type_dist[rt] = type_dist.get(rt, 0) + 1
+
+    return {
+        "total_findings": len(findings),
+        "severity_distribution": severity_dist,
+        "type_distribution": type_dist,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -357,6 +396,61 @@ async def get_analysis_results(analysis_id: str) -> dict:
     return ok(out)
 
 
+def _convert_fused_graph_for_visualization(fg: dict[str, Any], risk_findings: list | None = None) -> dict[str, Any]:
+    """Convert serialized fused graph data to visualization format.
+    
+    The serialized format stores nodes as a dict {name: {node_data}},
+    but the frontend expects an array of nodes with specific fields.
+    """
+    if not fg:
+        return {"nodes": [], "edges": [], "call_chains": []}
+    
+    nodes_raw = fg.get("nodes", {})
+    edges_raw = fg.get("edges", [])
+    risk_findings = risk_findings or []
+    
+    # Convert nodes dict to array with visualization fields
+    if isinstance(nodes_raw, dict):
+        nodes = []
+        for name, node_data in nodes_raw.items():
+            if not isinstance(node_data, dict):
+                continue
+            nodes.append({
+                "id": name,
+                "label": node_data.get("name", name),
+                "file": node_data.get("file_path", ""),
+                "line": node_data.get("line_start", 0),
+                "isEntryPoint": node_data.get("is_entry_point", False),
+                "entryType": node_data.get("entry_point_type", "none"),
+                "hasBranches": len(node_data.get("branches", [])) > 0,
+                "hasLocks": len(node_data.get("lock_ops", [])) > 0,
+                "hasProtocol": len(node_data.get("protocol_ops", [])) > 0,
+                "riskCount": sum(
+                    1 for r in risk_findings
+                    if name in r.get("related_functions", [])
+                ),
+            })
+    elif isinstance(nodes_raw, list):
+        # Already in array format (from live service)
+        nodes = nodes_raw
+    else:
+        nodes = []
+    
+    # Convert edges to visualization format
+    edges = []
+    for edge in edges_raw:
+        if isinstance(edge, dict):
+            edges.append({
+                "source": edge.get("caller", ""),
+                "target": edge.get("callee", ""),
+                "line": edge.get("call_site_line", 0),
+                "branchContext": edge.get("branch_context", ""),
+                "locksHeld": edge.get("lock_held", []),
+            })
+    
+    return {"nodes": nodes, "edges": edges, "call_chains": fg.get("call_chains", [])}
+
+
 @router.get("/{analysis_id}/call-graph")
 async def get_call_graph(analysis_id: str) -> dict:
     """Get call graph data for visualization."""
@@ -367,11 +461,13 @@ async def get_call_graph(analysis_id: str) -> dict:
     if service_live and service_live.result.fused_graph:
         return ok(service_live.get_call_graph_for_visualization())
 
-    # Otherwise use serialized data from DB
+    # Otherwise use serialized data from DB - convert to visualization format
     fg = getattr(result, "_serialized_fused_graph", None)
     if not fg:
         return ok({"nodes": [], "edges": [], "call_chains": []})
-    return ok(fg)
+    
+    # Convert dict-based nodes to array format for frontend
+    return ok(_convert_fused_graph_for_visualization(fg, result.risk_findings))
 
 
 @router.get("/{analysis_id}/risks")
@@ -441,6 +537,65 @@ async def get_protocol_state_machine(analysis_id: str) -> dict:
         return ok(service_live.get_protocol_state_machine_for_visualization())
 
     return ok(result.protocol_state_machine)
+
+
+@router.get("/{analysis_id}/deep-analysis")
+async def get_deep_analysis_findings(analysis_id: str) -> dict:
+    """Get deep analysis findings (P0-P3 cross-function semantic analysis).
+    
+    Returns findings from the DeepAnalysisEngine that include:
+    - Resource leaks at function exit points
+    - Callback context constraint violations
+    - Ownership transfer errors
+    - Initialization/destruction asymmetry
+    """
+    result, _ = _get_completed_result(analysis_id)
+    
+    # Get deep analysis results
+    deep_analysis = getattr(result, "deep_analysis", None)
+    if deep_analysis:
+        return ok(deep_analysis.to_dict() if hasattr(deep_analysis, "to_dict") else deep_analysis)
+    
+    # Check if findings are embedded in risk_findings with is_deep_finding flag
+    deep_findings = [
+        f for f in result.risk_findings
+        if f.get("is_deep_finding") or f.get("source") == "deep_analysis"
+    ]
+    
+    return ok({
+        "findings": deep_findings,
+        "total": len(deep_findings),
+    })
+
+
+@router.get("/{analysis_id}/semantic-index")
+async def get_semantic_index(analysis_id: str) -> dict:
+    """Get semantic index built from FusedGraph.
+    
+    The semantic index provides higher-level semantic structures:
+    - Paired operations (acquire/release matching)
+    - Unpaired resources (potential leaks)
+    - Exit resource states per function
+    - Callback contexts and constraints
+    - Ownership transfers
+    - Init/exit symmetry pairs
+    """
+    result, _ = _get_completed_result(analysis_id)
+    
+    semantic_index = getattr(result, "semantic_index", None)
+    if semantic_index:
+        return ok(semantic_index)
+    
+    return ok({
+        "paired_operations": [],
+        "unpaired_resources": [],
+        "exit_resource_states": [],
+        "callback_contexts": [],
+        "ownership_transfers": [],
+        "init_exit_pairs": [],
+        "function_callers": {},
+        "function_callees": {},
+    })
 
 
 # ---------------------------------------------------------------------------

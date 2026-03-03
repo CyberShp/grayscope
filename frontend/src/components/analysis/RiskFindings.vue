@@ -146,7 +146,10 @@ const filteredFindings = computed(() => {
 })
 
 function severityTag(severity) {
-  const map = { critical: 'danger', high: 'warning', medium: '', low: 'info' }
+  const map = {
+    critical: 'danger', high: 'warning', medium: 'info', low: 'success',
+    S0: 'danger', S1: 'warning', S2: 'info', S3: 'success',
+  }
   return map[severity] || 'info'
 }
 

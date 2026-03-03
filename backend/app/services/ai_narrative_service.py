@@ -199,7 +199,6 @@ async def _call_ai(
                 )
                 content = result.get("content", "")
                 
-                # 使用多层 JSON 提取
                 return _extract_json_multilayer(content)
                 
             except httpx.TimeoutException as e:
@@ -215,6 +214,11 @@ async def _call_ai(
                 
             except httpx.HTTPStatusError as e:
                 status_code = e.response.status_code
+                resp_body = ""
+                try:
+                    resp_body = e.response.text[:500]
+                except Exception:
+                    pass
                 last_error = f"http_{status_code}: {e}"
                 if status_code in _RETRYABLE_STATUS_CODES and attempt < max_retries:
                     wait_time = 2 ** attempt
@@ -222,7 +226,8 @@ async def _call_ai(
                                  f"retrying in {wait_time}s...")
                     await asyncio.sleep(wait_time)
                     continue
-                logger.error(f"AI call failed with HTTP {status_code}: {e}")
+                logger.error("AI call failed with HTTP %d: %s | body: %s",
+                             status_code, e, resp_body)
                 return {"error": f"http_{status_code}", "detail": str(e)}
                 
             except Exception as e:
@@ -853,7 +858,7 @@ async def generate_chunked_what_if_scenarios(
         user,
         api_key=ai_config.get("api_key"),
         base_url=ai_config.get("base_url"),
-        max_tokens=10000,
+        max_tokens=8000,
     )
     
     if on_progress:
@@ -1018,9 +1023,10 @@ class AINarrativeService:
         # 准备数据
         chains_for_flow = self._prepare_chains_for_flow(fused_graph)
         functions_for_dict = self._prepare_functions_for_dict(fused_graph)
+        _HIGH_SEVERITIES = {"critical", "high", "S0", "s0", "S1", "s1"}
         high_priority_risks = [
             r for r in risk_findings
-            if r.get("severity") in ("critical", "high")
+            if r.get("severity") in _HIGH_SEVERITIES
         ][:15]
         chains_for_whatif = self._prepare_chains_for_whatif(fused_graph, risk_findings)
         

@@ -4,12 +4,26 @@ from __future__ import annotations
 
 import logging
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 
 from app.ai.provider_base import ModelProvider
 
 logger = logging.getLogger(__name__)
+
+# Hosts that should bypass proxy (internal/local endpoints)
+_NO_PROXY_HOSTS = {"localhost", "127.0.0.1", "::1"}
+
+
+def _should_bypass_proxy(url: str) -> bool:
+    """Check if the URL should bypass proxy (localhost, 127.0.0.1, etc.)."""
+    try:
+        parsed = urlparse(url)
+        host = parsed.hostname or ""
+        return host.lower() in _NO_PROXY_HOSTS or host.startswith("192.168.") or host.startswith("10.")
+    except Exception:
+        return False
 
 
 class DeepSeekProvider(ModelProvider):
@@ -27,7 +41,8 @@ class DeepSeekProvider(ModelProvider):
         self._api_key = api_key or ""
         self._default_model = default_model
         self._timeout = timeout
-        self._proxy = proxy
+        # Bypass proxy for localhost/internal IPs to avoid 504/407 errors
+        self._proxy = None if _should_bypass_proxy(self._base_url) else proxy
 
     def name(self) -> str:
         return "deepseek"

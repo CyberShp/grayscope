@@ -21,7 +21,7 @@
       <!-- 状态表视图 -->
       <div v-if="viewMode === 'table'" class="gs-psm-table">
         <h4>状态列表</h4>
-        <el-table :data="data.states || []" stripe size="small" style="margin-bottom:20px">
+        <el-table :data="statesList" stripe size="small" style="margin-bottom:20px">
           <el-table-column prop="name" label="状态名" width="200">
             <template #default="{ row }">
               <span class="gs-state-name">{{ row.name }}</span>
@@ -87,12 +87,20 @@ const props = defineProps({
 
 const viewMode = ref('diagram')
 
+function normalizeStates(raw) {
+  if (!raw) return []
+  if (Array.isArray(raw)) return raw
+  return Object.values(raw)
+}
+
+const statesList = computed(() => normalizeStates(props.data.states))
+
 const hasData = computed(() => 
-  (props.data.states?.length > 0) || (props.data.transitions?.length > 0) || props.data.mermaid
+  (statesList.value.length > 0) || (props.data.transitions?.length > 0) || props.data.mermaid
 )
 
 const chartOption = computed(() => {
-  const states = props.data.states || []
+  const states = statesList.value
   const transitions = props.data.transitions || []
 
   const nodes = states.map(s => ({

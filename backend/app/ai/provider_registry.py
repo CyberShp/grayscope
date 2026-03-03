@@ -16,6 +16,16 @@ logger = logging.getLogger(__name__)
 _cache: dict[str, ModelProvider] = {}
 
 
+class ProviderNotSupportedError(ValueError):
+    """Raised when an unknown or unsupported provider is requested."""
+    def __init__(self, provider_name: str):
+        self.provider_name = provider_name
+        super().__init__(
+            f"不支持的 AI 提供商: {provider_name}。"
+            f"支持的提供商: {', '.join(sorted(SUPPORTED_PROVIDERS))}"
+        )
+
+
 def _build(provider_name: str, **overrides: Any) -> ModelProvider:
     """Construct a provider instance from settings + optional overrides."""
     proxy = overrides.get("proxy", settings.ai_proxy)
@@ -35,7 +45,7 @@ def _build(provider_name: str, **overrides: Any) -> ModelProvider:
             health_path=overrides.get("health_path", "/v1/models"),
             proxy=proxy,
         )
-    raise ValueError(f"unknown provider: {provider_name}")
+    raise ProviderNotSupportedError(provider_name)
 
 
 def get_provider(provider_name: str, **overrides: Any) -> ModelProvider:
